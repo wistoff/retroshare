@@ -53,7 +53,7 @@ def rebuild(sources, merged_dir):
     """Rebuild the symlink tree in merged_dir from sources.
 
     Args:
-        sources: list of dicts with keys 'name', 'path', 'rom_root'
+        sources: list of dicts with keys 'name', 'path'
         merged_dir: absolute path to the merge destination directory
 
     Returns:
@@ -70,18 +70,14 @@ def rebuild(sources, merged_dir):
 
     for source in sources:
         src_path = source.get("path", "")
-        rom_root = source.get("rom_root", "")
         src_name = source.get("name", src_path)
 
-        # Build the full ROM root path
-        if rom_root:
-            rom_root_path = os.path.join(src_path, rom_root)
-        else:
-            rom_root_path = src_path
+        # The source path points directly to the folder containing system folders
+        rom_root_path = src_path
 
         if not os.path.isdir(rom_root_path):
             logger.warning(
-                "Source '%s': ROM root path does not exist or is not a directory: %s",
+                "Source '%s': path does not exist or is not a directory: %s",
                 src_name,
                 rom_root_path,
             )

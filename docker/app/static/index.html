@@ -532,13 +532,7 @@
         <input type="text" id="field-path" placeholder="/sources/my-roms" autocomplete="off" />
         <button class="btn-ghost" onclick="openBrowser()">Browse</button>
       </div>
-      <p class="form-hint">Must be a path under <code>/sources/</code></p>
-    </div>
-
-    <div class="form-group">
-      <label for="field-rom-root">ROM Root <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-      <input type="text" id="field-rom-root" placeholder="e.g. roms" autocomplete="off" />
-      <p class="form-hint">Sub-folder inside the path that contains system folders. Leave blank if systems are at the root.</p>
+      <p class="form-hint">Browse to the folder containing system folders (e.g. snes/, gba/)</p>
     </div>
 
     <div class="form-actions">
@@ -631,7 +625,6 @@
           <div class="source-name">${escHtml(s.name || '(unnamed)')}</div>
           <div class="source-meta">
             <span>Path: <span class="tag" title="${escHtml(s.path)}">${escHtml(s.path)}</span></span>
-            ${s.rom_root ? `<span>ROM root: <span class="tag">${escHtml(s.rom_root)}</span></span>` : ''}
           </div>
         </div>
         <div class="source-actions">
@@ -648,7 +641,6 @@
     document.getElementById('save-btn').textContent = 'Add Source';
     document.getElementById('field-name').value = '';
     document.getElementById('field-path').value = '';
-    document.getElementById('field-rom-root').value = '';
     openModal('source-modal');
     document.getElementById('field-name').focus();
   }
@@ -660,20 +652,18 @@
     document.getElementById('save-btn').textContent = 'Save Changes';
     document.getElementById('field-name').value = s.name || '';
     document.getElementById('field-path').value = s.path || '';
-    document.getElementById('field-rom-root').value = s.rom_root || '';
     openModal('source-modal');
     document.getElementById('field-name').focus();
   }
 
   async function saveSource() {
-    const name     = document.getElementById('field-name').value.trim();
-    const path     = document.getElementById('field-path').value.trim();
-    const rom_root = document.getElementById('field-rom-root').value.trim();
+    const name = document.getElementById('field-name').value.trim();
+    const path = document.getElementById('field-path').value.trim();
 
     if (!name) { showToast('Name is required.', 'error'); return; }
     if (!path) { showToast('Path is required.', 'error'); return; }
 
-    const entry = { name, path, rom_root };
+    const entry = { name, path };
     const updated = [...sources];
     if (editIndex >= 0) {
       updated[editIndex] = entry;
