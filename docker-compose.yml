@@ -3,7 +3,7 @@ services:
     build: ./docker
     container_name: retroshare
     ports:
-      - "445:445"
+      - "7867:445"
       - "7868:8080"
     volumes:
       - /mnt/remotes/100.74.79.126_media:/sources/100.74.79.126_media:ro
