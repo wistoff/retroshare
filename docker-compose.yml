@@ -1,7 +1,13 @@
+networks:
+  proxynet:
+    external: true
+
 services:
   retroshare:
     build: ./docker
     container_name: retroshare
+    networks:
+      - proxynet
     ports:
       - "7867:445"
       - "7868:8080"
