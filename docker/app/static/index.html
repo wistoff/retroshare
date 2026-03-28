@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RetroShare</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #22263a;
+      --border:    #2e3350;
+      --accent:    #7c6af7;
+      --accent-h:  #9b8dff;
+      --danger:    #e05c5c;
+      --danger-h:  #f07070;
+      --success:   #4caf7d;
+      --text:      #e2e4f0;
+      --text-muted:#8890b0;
+      --radius:    8px;
+      --shadow:    0 4px 24px rgba(0,0,0,.45);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────────── */
+    .app {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 20px 60px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 28px 0 24px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 32px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+
+    h1 span {
+      color: var(--accent);
+    }
+
+    .status-bar {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .stat-value {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.1;
+    }
+
+    .stat-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    /* ── Section headings ─────────────────────────────────────────────── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .section-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-muted);
+    }
+
+    /* ── Buttons ──────────────────────────────────────────────────────── */
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      font-weight: 500;
+      padding: 8px 16px;
+      transition: background 0.15s, color 0.15s, opacity 0.15s;
+      font-family: inherit;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid transparent;
+    }
+    .btn-danger:hover:not(:disabled) {
+      background: rgba(224,92,92,.12);
+      border-color: var(--danger);
+    }
+
+    .btn-icon {
+      padding: 6px 10px;
+      font-size: 0.8rem;
+    }
+
+    .btn-rebuild {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 10px 22px;
+    }
+    .btn-rebuild:hover:not(:disabled) {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── Source cards ─────────────────────────────────────────────────── */
+    #sources-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .source-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      transition: border-color 0.15s;
+    }
+    .source-card:hover { border-color: var(--accent); }
+
+    .source-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .source-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-meta {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .source-meta span {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .source-meta .tag {
+      background: var(--surface2);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.75rem;
+      color: var(--text);
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .source-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+    }
+
+    .empty-state p { margin-top: 8px; font-size: 0.875rem; }
+
+    /* ── Rebuild section ──────────────────────────────────────────────── */
+    .rebuild-section {
+      margin-top: 36px;
+      padding-top: 28px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .rebuild-result {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      flex: 1;
+    }
+
+    .rebuild-result.success { color: var(--success); }
+    .rebuild-result.error   { color: var(--danger); }
+
+    /* ── Toast ────────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 20px;
+      font-size: 0.875rem;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      max-width: 340px;
+      z-index: 9999;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    #toast.error { border-color: var(--danger); color: var(--danger); }
+    #toast.success { border-color: var(--success); color: var(--success); }
+
+    /* ── Modal overlay ────────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.65);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      width: 100%;
+      max-width: 520px;
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+
+    .modal h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 22px;
+    }
+
+    /* ── Form ─────────────────────────────────────────────────────────── */
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.9rem;
+      font-family: inherit;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--text-muted); }
+
+    .input-with-btn {
+      display: flex;
+      gap: 8px;
+    }
+    .input-with-btn input { flex: 1; }
+
+    .form-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 5px;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    /* ── Directory browser ────────────────────────────────────────────── */
+    #browser-modal .modal { max-width: 480px; }
+
+    .browser-path {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      word-break: break-all;
+    }
+
+    .browser-list {
+      list-style: none;
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      margin-bottom: 16px;
+    }
+
+    .browser-list li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+      transition: background 0.1s;
+    }
+    .browser-list li:last-child { border-bottom: none; }
+    .browser-list li:hover { background: var(--surface2); }
+
+    .browser-list li .dir-icon {
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .browser-empty {
+      padding: 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    .browser-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .browser-loading {
+      text-align: center;
+      padding: 32px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    /* ── Spinner ──────────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Scrollbar ────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🎮</div>
+      <h1>Retro<span>Share</span></h1>
+    </div>
+    <div class="status-bar" id="status-bar">
+      <div class="stat">
+        <span class="stat-value" id="stat-sources">—</span>
+        <span class="stat-label">Sources</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-systems">—</span>
+        <span class="stat-label">Systems</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="stat-files">—</span>
+        <span class="stat-label">Files</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Sources ─────────────────────────────────────────────────────── -->
+  <div class="section-header">
+    <h2>ROM Sources</h2>
+    <button class="btn-primary" onclick="openAddModal()">+ Add Source</button>
+  </div>
+
+  <div id="sources-list">
+    <div class="empty-state">
+      <span class="spinner"></span> Loading sources…
+    </div>
+  </div>
+
+  <!-- ── Rebuild ─────────────────────────────────────────────────────── -->
+  <div class="rebuild-section">
+    <button class="btn-rebuild" id="rebuild-btn" onclick="triggerRebuild()">⟳ Rebuild Now</button>
+    <span class="rebuild-result" id="rebuild-result"></span>
+  </div>
+
+</div><!-- /.app -->
+
+<!-- ── Add / Edit Source Modal ─────────────────────────────────────────── -->
+<div class="modal-overlay" id="source-modal" onclick="handleOverlayClick(event, 'source-modal')">
+  <div class="modal">
+    <h3 id="modal-title">Add Source</h3>
+
+    <div class="form-group">
+      <label for="field-name">Name</label>
+      <input type="text" id="field-name" placeholder="e.g. NAS ROMs" autocomplete="off" />
+    </div>
+
+    <div class="form-group">
+      <label for="field-path">Path</label>
+      <div class="input-with-btn">
+        <input type="text" id="field-path" placeholder="/sources/my-roms" autocomplete="off" />
+        <button class="btn-ghost" onclick="openBrowser()">Browse</button>
+      </div>
+      <p class="form-hint">Must be a path under <code>/sources/</code></p>
+    </div>
+
+    <div class="form-group">
+      <label for="field-rom-root">ROM Root <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+      <input type="text" id="field-rom-root" placeholder="e.g. roms" autocomplete="off" />
+      <p class="form-hint">Sub-folder inside the path that contains system folders. Leave blank if systems are at the root.</p>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn-ghost" onclick="closeModal('source-modal')">Cancel</button>
+      <button class="btn-primary" id="save-btn" onclick="saveSource()">Save Source</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Directory Browser Modal ─────────────────────────────────────────── -->
+<div class="modal-overlay" id="browser-modal" onclick="handleOverlayClick(event, 'browser-modal')">
+  <div class="modal">
+    <h3>Browse Directories</h3>
+    <div class="browser-path" id="browser-path">/sources/</div>
+    <div id="browser-content">
+      <div class="browser-loading"><span class="spinner"></span> Loading…</div>
+    </div>
+    <div class="browser-actions">
+      <button class="btn-ghost" id="browser-up-btn" onclick="browserUp()">↑ Up</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn-ghost" onclick="closeModal('browser-modal')">Cancel</button>
+        <button class="btn-primary" onclick="selectBrowserPath()">Select This Folder</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+  /* ── State ──────────────────────────────────────────────────────────── */
+  let sources = [];          // current sources array
+  let editIndex = -1;        // -1 = adding new, >=0 = editing existing
+  let browserCurrentPath = '/sources/';
+  let toastTimer = null;
+
+  /* ── Init ───────────────────────────────────────────────────────────── */
+  async function init() {
+    await Promise.all([loadSources(), loadStatus()]);
+  }
+
+  /* ── API helpers ────────────────────────────────────────────────────── */
+  async function apiFetch(url, opts = {}) {
+    const res = await fetch(url, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  /* ── Status ─────────────────────────────────────────────────────────── */
+  async function loadStatus() {
+    try {
+      const s = await apiFetch('/api/status');
+      document.getElementById('stat-sources').textContent = s.sources_count;
+      document.getElementById('stat-systems').textContent = s.systems.length;
+      document.getElementById('stat-files').textContent = s.total_files.toLocaleString();
+    } catch (e) {
+      document.getElementById('stat-sources').textContent = '?';
+      document.getElementById('stat-systems').textContent = '?';
+      document.getElementById('stat-files').textContent = '?';
+    }
+  }
+
+  /* ── Sources ────────────────────────────────────────────────────────── */
+  async function loadSources() {
+    try {
+      sources = await apiFetch('/api/sources');
+      renderSources();
+    } catch (e) {
+      document.getElementById('sources-list').innerHTML =
+        `<div class="empty-state" style="color:var(--danger)">Failed to load sources: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderSources() {
+    const el = document.getElementById('sources-list');
+    if (sources.length === 0) {
+      el.innerHTML = `
+        <div class="empty-state">
+          <div style="font-size:2rem;margin-bottom:8px">📂</div>
+          <strong>No sources configured</strong>
+          <p>Add a source to start merging ROM libraries.</p>
+        </div>`;
+      return;
+    }
+    el.innerHTML = sources.map((s, i) => `
+      <div class="source-card">
+        <div class="source-info">
+          <div class="source-name">${escHtml(s.name || '(unnamed)')}</div>
+          <div class="source-meta">
+            <span>Path: <span class="tag" title="${escHtml(s.path)}">${escHtml(s.path)}</span></span>
+            ${s.rom_root ? `<span>ROM root: <span class="tag">${escHtml(s.rom_root)}</span></span>` : ''}
+          </div>
+        </div>
+        <div class="source-actions">
+          <button class="btn-ghost btn-icon" onclick="openEditModal(${i})" title="Edit">✏️ Edit</button>
+          <button class="btn-danger btn-icon" onclick="removeSource(${i})" title="Remove">✕</button>
+        </div>
+      </div>`).join('');
+  }
+
+  /* ── Add / Edit modal ───────────────────────────────────────────────── */
+  function openAddModal() {
+    editIndex = -1;
+    document.getElementById('modal-title').textContent = 'Add Source';
+    document.getElementById('save-btn').textContent = 'Add Source';
+    document.getElementById('field-name').value = '';
+    document.getElementById('field-path').value = '';
+    document.getElementById('field-rom-root').value = '';
+    openModal('source-modal');
+    document.getElementById('field-name').focus();
+  }
+
+  function openEditModal(i) {
+    editIndex = i;
+    const s = sources[i];
+    document.getElementById('modal-title').textContent = 'Edit Source';
+    document.getElementById('save-btn').textContent = 'Save Changes';
+    document.getElementById('field-name').value = s.name || '';
+    document.getElementById('field-path').value = s.path || '';
+    document.getElementById('field-rom-root').value = s.rom_root || '';
+    openModal('source-modal');
+    document.getElementById('field-name').focus();
+  }
+
+  async function saveSource() {
+    const name     = document.getElementById('field-name').value.trim();
+    const path     = document.getElementById('field-path').value.trim();
+    const rom_root = document.getElementById('field-rom-root').value.trim();
+
+    if (!name) { showToast('Name is required.', 'error'); return; }
+    if (!path) { showToast('Path is required.', 'error'); return; }
+
+    const entry = { name, path, rom_root };
+    const updated = [...sources];
+    if (editIndex >= 0) {
+      updated[editIndex] = entry;
+    } else {
+      updated.push(entry);
+    }
+
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+    try {
+      const result = await apiFetch('/api/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      sources = updated;
+      renderSources();
+      await loadStatus();
+      closeModal('source-modal');
+      showRebuildResult(result);
+      showToast(editIndex >= 0 ? 'Source updated.' : 'Source added.', 'success');
+    } catch (e) {
+      showToast(`Save failed: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = editIndex >= 0 ? 'Save Changes' : 'Add Source';
+    }
+  }
+
+  async function removeSource(i) {
+    const s = sources[i];
+    if (!confirm(`Remove source "${s.name || s.path}"?\n\nThis will trigger a rebuild.`)) return;
+
+    const updated = sources.filter((_, idx) => idx !== i);
+
+    try {
+      const result = await apiFetch('/api/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      sources = updated;
+      renderSources();
+      await loadStatus();
+      showRebuildResult(result);
+      showToast('Source removed.', 'success');
+    } catch (e) {
+      showToast(`Remove failed: ${e.message}`, 'error');
+    }
+  }
+
+  /* ── Rebuild ────────────────────────────────────────────────────────── */
+  async function triggerRebuild() {
+    const btn = document.getElementById('rebuild-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Rebuilding…';
+    document.getElementById('rebuild-result').textContent = '';
+    document.getElementById('rebuild-result').className = 'rebuild-result';
+
+    try {
+      const result = await apiFetch('/api/rebuild', { method: 'POST' });
+      await loadStatus();
+      showRebuildResult(result);
+      showToast('Rebuild complete.', 'success');
+    } catch (e) {
+      document.getElementById('rebuild-result').textContent = `Error: ${e.message}`;
+      document.getElementById('rebuild-result').className = 'rebuild-result error';
+      showToast(`Rebuild failed: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '⟳ Rebuild Now';
+    }
+  }
+
+  function showRebuildResult(result) {
+    const el = document.getElementById('rebuild-result');
+    if (result.error) {
+      el.textContent = `Rebuild error: ${result.error}`;
+      el.className = 'rebuild-result error';
+    } else {
+      const sys = result.systems ? result.systems.length : 0;
+      const files = result.total_files != null ? result.total_files : 0;
+      el.textContent = `✓ ${sys} system${sys !== 1 ? 's' : ''}, ${files.toLocaleString()} file${files !== 1 ? 's' : ''} linked`;
+      el.className = 'rebuild-result success';
+    }
+  }
+
+  /* ── Directory browser ──────────────────────────────────────────────── */
+  function openBrowser() {
+    browserCurrentPath = '/sources/';
+    openModal('browser-modal');
+    browserNavigate('/sources/');
+  }
+
+  async function browserNavigate(path) {
+    browserCurrentPath = path;
+    document.getElementById('browser-path').textContent = path;
+    document.getElementById('browser-up-btn').disabled = (path === '/sources/' || path === '/sources');
+    document.getElementById('browser-content').innerHTML =
+      '<div class="browser-loading"><span class="spinner"></span> Loading…</div>';
+
+    try {
+      const data = await apiFetch(`/api/browse?path=${encodeURIComponent(path)}`);
+      renderBrowserDirs(data.dirs, data.path);
+    } catch (e) {
+      document.getElementById('browser-content').innerHTML =
+        `<div class="browser-empty" style="color:var(--danger)">Error: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderBrowserDirs(dirs, resolvedPath) {
+    // Keep browserCurrentPath in sync with the server-resolved absolute path
+    browserCurrentPath = resolvedPath;
+    document.getElementById('browser-path').textContent = resolvedPath;
+
+    const content = document.getElementById('browser-content');
+    if (dirs.length === 0) {
+      content.innerHTML = '<div class="browser-empty">No sub-directories here.</div>';
+      return;
+    }
+    const ul = document.createElement('ul');
+    ul.className = 'browser-list';
+    dirs.forEach(name => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span class="dir-icon">📁</span><span>${escHtml(name)}</span>`;
+      li.onclick = () => browserNavigate(resolvedPath + '/' + name);
+      ul.appendChild(li);
+    });
+    content.innerHTML = '';
+    content.appendChild(ul);
+  }
+
+  function browserUp() {
+    // Strip trailing slash, then go up one level
+    const p = browserCurrentPath.replace(/\/$/, '');
+    const parent = p.substring(0, p.lastIndexOf('/')) || '/sources';
+    // Don't go above /sources
+    const safe = parent.startsWith('/sources') ? parent : '/sources';
+    browserNavigate(safe);
+  }
+
+  function selectBrowserPath() {
+    document.getElementById('field-path').value = browserCurrentPath;
+    closeModal('browser-modal');
+  }
+
+  /* ── Modal helpers ──────────────────────────────────────────────────── */
+  function openModal(id) {
+    document.getElementById(id).classList.add('open');
+  }
+
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+  }
+
+  function handleOverlayClick(e, id) {
+    if (e.target === document.getElementById(id)) closeModal(id);
+  }
+
+  /* ── Toast ──────────────────────────────────────────────────────────── */
+  function showToast(msg, type = '') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = type ? `show ${type}` : 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ''; }, 3200);
+  }
+
+  /* ── Utility ────────────────────────────────────────────────────────── */
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /* ── Keyboard shortcuts ─────────────────────────────────────────────── */
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeModal('browser-modal');
+      closeModal('source-modal');
+    }
+    if (e.key === 'Enter' && document.getElementById('source-modal').classList.contains('open')) {
+      // Only trigger save if focus is inside the modal (not on a button already)
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+        saveSource();
+      }
+    }
+  });
+
+  /* ── Boot ───────────────────────────────────────────────────────────── */
+  init();
+</script>
+</body>
+</html>

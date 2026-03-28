@@ -1,0 +1,7 @@
+.DS_Store
+.opencode/
+misc/
+opencode.json
+__pycache__/
+*.pyc
+romsync.cfg
