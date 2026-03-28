@@ -218,7 +218,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         # Resolve to an absolute path and ensure it stays under SOURCES_ROOT
-        candidate = os.path.realpath(os.path.join(SOURCES_ROOT, browse_path.lstrip("/")))
+        # If the path already starts with SOURCES_ROOT, use it directly
+        if browse_path.startswith(SOURCES_ROOT):
+            candidate = os.path.realpath(browse_path)
+        else:
+            candidate = os.path.realpath(os.path.join(SOURCES_ROOT, browse_path.lstrip("/")))
         sources_real = os.path.realpath(SOURCES_ROOT)
 
         # Allow browsing SOURCES_ROOT itself or anything strictly under it
