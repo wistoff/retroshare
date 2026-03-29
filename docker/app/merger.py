@@ -9,6 +9,8 @@ source's file is used and subsequent ones are skipped.
 import os
 import logging
 
+import romident
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,12 +51,14 @@ def _clear_merged(merged_dir):
                 pass
 
 
-def rebuild(sources, merged_dir):
+def rebuild(sources, merged_dir, config_dir=None):
     """Rebuild the symlink tree in merged_dir from sources.
 
     Args:
         sources: list of dicts with keys 'name', 'path'
         merged_dir: absolute path to the merge destination directory
+        config_dir: optional path to the config directory; if provided,
+            OpenVGDB is used to rename symlinks to canonical No-Intro names.
 
     Returns:
         dict with keys:
@@ -62,6 +66,13 @@ def rebuild(sources, merged_dir):
             'total_files': total number of symlinks created
     """
     _clear_merged(merged_dir)
+
+    # Resolve the ROM identification DB once per rebuild (not per file).
+    db_path = None
+    if config_dir is not None:
+        db_path = romident.ensure_db(config_dir)
+        if db_path is None:
+            logger.warning("OpenVGDB unavailable — ROM identification disabled for this rebuild")
 
     # Track which destination paths already exist (first-source-wins)
     seen = set()
@@ -117,10 +128,19 @@ def rebuild(sources, merged_dir):
                 if os.path.isdir(src_file) and not os.path.islink(src_file):
                     continue
 
-                dest_system_dir = os.path.join(merged_dir, system)
-                dest_file = os.path.join(dest_system_dir, filename)
+                # Attempt ROM identification to get a canonical symlink name.
+                dest_name = filename
+                if db_path is not None:
+                    canonical = romident.identify_rom(db_path, src_file)
+                    if canonical is not None and canonical != filename:
+                        logger.debug("Renamed: %s -> %s", filename, canonical)
+                        dest_name = canonical
 
-                # First-source-wins
+                dest_system_dir = os.path.join(merged_dir, system)
+                dest_file = os.path.join(dest_system_dir, dest_name)
+
+                # First-source-wins (keyed on destination path, which uses the
+                # canonical name so deduplication works correctly after renaming)
                 if dest_file in seen:
                     continue
 

@@ -431,18 +431,24 @@ class Handler(BaseHTTPRequestHandler):
         background watcher thread. Callers see identical return-value semantics
         to the pre-lock version.
         """
+        rebuild_ok = False
         with _rebuild_lock:
             try:
-                result = merger.rebuild(sources, MERGED_DIR)
+                result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
                 logger.info(
                     "Rebuild complete: %d systems, %d files",
                     len(result["systems"]),
                     result["total_files"],
                 )
-                return result
+                rebuild_ok = True
             except Exception as exc:  # noqa: BLE001
                 logger.error("Rebuild failed: %s", exc)
-                return {"systems": [], "total_files": 0, "error": str(exc)}
+                result = {"systems": [], "total_files": 0, "error": str(exc)}
+
+        if rebuild_ok:
+            scraper.prune_cache(CACHE_FILE, MERGED_DIR)
+
+        return result
 
     def _read_json_body(self):
         """Read and parse the request body as JSON. Sends error response and
@@ -483,16 +489,21 @@ def _watcher_rebuild_callback():
     """
     try:
         sources = _load_sources()
+        rebuild_ok = False
         with _rebuild_lock:
             try:
-                result = merger.rebuild(sources, MERGED_DIR)
+                result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
                 logger.info(
                     "Auto-rebuild complete: %d systems, %d files",
                     len(result["systems"]),
                     result["total_files"],
                 )
+                rebuild_ok = True
             except Exception as exc:  # noqa: BLE001
                 logger.error("Auto-rebuild failed: %s", exc)
+
+        if rebuild_ok:
+            scraper.prune_cache(CACHE_FILE, MERGED_DIR)
     except Exception as exc:  # noqa: BLE001
         logger.error("Watcher callback error: %s", exc)
 
@@ -504,12 +515,13 @@ def main():
     logger.info("Running startup rebuild…")
     sources = _load_sources()
     try:
-        result = merger.rebuild(sources, MERGED_DIR)
+        result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
         logger.info(
             "Startup rebuild complete: %d systems, %d files",
             len(result["systems"]),
             result["total_files"],
         )
+        scraper.prune_cache(CACHE_FILE, MERGED_DIR)
     except Exception as exc:  # noqa: BLE001
         logger.error("Startup rebuild failed: %s", exc)
 

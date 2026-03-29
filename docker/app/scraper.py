@@ -238,6 +238,78 @@ def save_cache(cache_file, data):
 
 
 # ---------------------------------------------------------------------------
+# Cache pruning
+# ---------------------------------------------------------------------------
+
+
+def prune_cache(cache_file, merged_dir):
+    """Remove stale entries from the scraper cache.
+
+    An entry is stale when its "system/filename" key no longer corresponds to
+    any file currently present in *merged_dir*.  This happens after a rebuild
+    renames symlinks (e.g. following ROM identification).
+
+    Only runs when *cache_file* already exists; returns 0 immediately if it
+    does not.
+
+    Args:
+        cache_file:  Path to the JSON cache file (e.g. "/config/gamecache.json").
+        merged_dir:  Path to the merged ROM tree (system/filename layout).
+
+    Returns:
+        Number of entries removed from the cache.
+    """
+    if not os.path.isfile(cache_file):
+        return 0
+
+    cache = load_cache(cache_file)
+    if not cache:
+        return 0
+
+    # Build the set of all current "system/filename" keys from merged_dir.
+    current_keys = set()
+    if os.path.isdir(merged_dir):
+        try:
+            for system_entry in os.scandir(merged_dir):
+                if not system_entry.is_dir(follow_symlinks=False):
+                    continue
+                if system_entry.name.startswith("."):
+                    continue
+                try:
+                    for file_entry in os.scandir(system_entry.path):
+                        if file_entry.name.startswith("."):
+                            continue
+                        if file_entry.is_dir(follow_symlinks=False):
+                            continue
+                        current_keys.add(f"{system_entry.name}/{file_entry.name}")
+                except OSError as exc:
+                    logger.warning(
+                        "prune_cache: cannot list system dir %s: %s",
+                        system_entry.path,
+                        exc,
+                    )
+        except OSError as exc:
+            logger.warning("prune_cache: cannot scan merged dir %s: %s", merged_dir, exc)
+
+    stale_keys = [key for key in cache if key not in current_keys]
+    if not stale_keys:
+        logger.info("prune_cache: no stale entries found")
+        return 0
+
+    for key in stale_keys:
+        del cache[key]
+
+    try:
+        save_cache(cache_file, cache)
+    except OSError as exc:
+        logger.error("prune_cache: failed to save pruned cache: %s", exc)
+        return 0
+
+    logger.info("prune_cache: removed %d stale cache entries", len(stale_keys))
+    return len(stale_keys)
+
+
+# ---------------------------------------------------------------------------
 # Bulk scrape
 # ---------------------------------------------------------------------------
 
