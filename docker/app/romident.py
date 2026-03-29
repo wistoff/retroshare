@@ -12,8 +12,10 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 import zlib
@@ -38,6 +40,70 @@ _HEADER_SKIP = {
     ".fds": 16,   # fwNES header
     ".lnx": 64,   # Atari Lynx header
     ".a78": 128,  # Atari 7800 header
+}
+
+_SCREENSCRAPER_BASE_URL = "https://api.screenscraper.fr/api2/jeuRecherche.php"
+
+_SCREENSCRAPER_SYSTEM_MAP = {
+    "gba": "52",
+    "gbc": "41",
+    "gb": "40",
+    "nes": "7",
+    "snes": "6",
+    "sfc": "6",
+    "n64": "3",
+    "nds": "38",
+    "psx": "1",
+    "ps1": "1",
+    "megadrive": "10",
+    "genesis": "10",
+    "mastersystem": "2",
+    "sms": "2",
+    "gamegear": "4",
+    "gg": "4",
+    "lynx": "13",
+    "atari2600": "22",
+    "atari7800": "23",
+    "pce": "8",
+    "tg16": "8",
+    "ngp": "26",
+    "ngpc": "26",
+    "wonderswan": "36",
+    "ws": "36",
+    "wsc": "37",
+    "arcade": "52",
+    "mame": "52",
+}
+
+_SCREENSCRAPER_EXT_MAP = {
+    "gba": ".gba",
+    "gbc": ".gbc",
+    "gb": ".gb",
+    "nes": ".nes",
+    "snes": ".sfc",
+    "sfc": ".sfc",
+    "n64": ".n64",
+    "nds": ".nds",
+    "psx": ".bin",
+    "ps1": ".bin",
+    "megadrive": ".md",
+    "genesis": ".md",
+    "mastersystem": ".sms",
+    "sms": ".sms",
+    "gamegear": ".gg",
+    "gg": ".gg",
+    "lynx": ".lnx",
+    "atari2600": ".a26",
+    "atari7800": ".a78",
+    "pce": ".pce",
+    "tg16": ".pce",
+    "ngp": ".ngp",
+    "ngpc": ".ngp",
+    "wonderswan": ".ws",
+    "ws": ".ws",
+    "wsc": ".wsc",
+    "arcade": "",
+    "mame": "",
 }
 
 
@@ -356,35 +422,130 @@ def lookup_crc(db_path, crc_hex):
 
 
 # ---------------------------------------------------------------------------
-# 4. identify_rom — convenience: hash + lookup
+# 4. ScreenScraper lookup
 # ---------------------------------------------------------------------------
 
 
-def identify_rom(db_path, filepath):
-    """Hash a ROM file and look it up in OpenVGDB.
-
-    Tries CRC32 first, then falls back to MD5, then SHA1.
+def screenScraper_lookup(hashes, system_name, debug_info=None):
+    """Look up a ROM via the ScreenScraper API using hash or filename.
 
     Args:
-        db_path:  Path to openvgdb.sqlite.
-        filepath: Path to the ROM file.
+        hashes:       dict with "crc32", "md5", "sha1" keys (uppercase hex).
+        system_name: System folder name (e.g. "gba").
+        debug_info:   Optional dict to populate with debug info.
+
+    Returns:
+        Canonical filename string (e.g. "Kirby & The Amazing Mirror.gba"),
+        or None if not found or on error.
+    """
+    system_id = _SCREENSCRAPER_SYSTEM_MAP.get(system_name.lower())
+    if system_id is None:
+        if debug_info is not None:
+            debug_info["ss_error"] = f"unknown system: {system_name}"
+        return None
+
+    params = {
+        "devid": os.environ.get("SCREENSCRAPER_DEV_ID", ""),
+        "devpassword": os.environ.get("SCREENSCRAPER_DEV_PASSWORD", ""),
+        "ssid": os.environ.get("SCREENSCRAPAPER_SSID", ""),
+        "sspassword": os.environ.get("SCREENSCRAPER_SS_PASSWORD", ""),
+        "systemeid": system_id,
+        "crc": hashes.get("crc32", ""),
+        "md5": hashes.get("md5", ""),
+        "sha1": hashes.get("sha1", ""),
+    }
+
+    url = _SCREENSCRAPER_BASE_URL + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        if debug_info is not None:
+            debug_info["ss_error"] = str(exc)
+        return None
+
+    if debug_info is not None:
+        debug_info["ss_response"] = data
+
+    games = data.get("response", {}).get("jeux", {}).get("jeu", [])
+    if not games:
+        if debug_info is not None:
+            debug_info["ss_found"] = False
+        return None
+
+    game = games[0]
+    rom_name = game.get("rom", {}).get("romNom", "")
+    if not rom_name:
+        if debug_info is not None:
+            debug_info["ss_found"] = False
+        return None
+
+    rom_name = re.sub(r"&", "and", rom_name)
+
+    ext = _SCREENSCRAPER_EXT_MAP.get(system_name.lower(), "")
+    canonical = f"{rom_name}{ext}"
+
+    if debug_info is not None:
+        debug_info["ss_found"] = True
+        debug_info["ss_canonical"] = canonical
+
+    return canonical
+
+
+# ---------------------------------------------------------------------------
+# 5. identify_rom — hash + OpenVGDB + ScreenScraper fallback
+# ---------------------------------------------------------------------------
+
+
+def identify_rom(db_path, filepath, system_name=None, debug=False):
+    """Hash a ROM file and look it up in OpenVGDB, then ScreenScraper.
+
+    Tries CRC32 first, then MD5, then SHA1 via OpenVGDB.  If all fail and
+    system_name is provided, falls back to ScreenScraper.
+
+    Args:
+        db_path:     Path to openvgdb.sqlite.
+        filepath:    Path to the ROM file.
+        system_name: Optional system folder name (e.g. "gba") for ScreenScraper
+                     fallback and for filename-based lookup.
+        debug:       If True, returns a debug dict as second return value.
 
     Returns:
         Canonical No-Intro filename string, or None if not found or on error.
+        If debug=True, returns a (result, debug_info) tuple.
     """
+    debug_info = {} if debug else None
+
     try:
         hashes = hash_rom(filepath)
     except OSError as exc:
         logger.warning("Could not hash %s: %s", filepath, exc)
-        return None
+        return (None, debug_info) if debug else None
 
     if hashes is None:
-        return None
+        return (None, debug_info) if debug else None
+
+    if debug_info is not None:
+        debug_info["hashes"] = hashes
 
     for hash_type in ("crc32", "md5", "sha1"):
         result = lookup_rom(db_path, hash_type, hashes[hash_type])
         if result is not None:
-            logger.debug("Identified %s via %s: %s", filepath, hash_type, result)
-            return result
+            logger.debug("Identified %s via OpenVGDB/%s: %s", filepath, hash_type, result)
+            if debug_info is not None:
+                debug_info["source"] = f"OpenVGDB/{hash_type}"
+                debug_info["canonical"] = result
+            return (result, debug_info) if debug else result
 
-    return None
+    if system_name is not None:
+        result = screenScraper_lookup(hashes, system_name, debug_info=debug_info)
+        if result is not None:
+            logger.debug("Identified %s via ScreenScraper: %s", filepath, result)
+            if debug_info is not None:
+                debug_info["source"] = "ScreenScraper"
+                debug_info["canonical"] = result
+            return (result, debug_info) if debug else result
+
+    return (None, debug_info) if debug else None
