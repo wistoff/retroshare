@@ -4,6 +4,13 @@ server.py — HTTP API server for retroshare.
 Serves the web UI and provides a JSON API for managing ROM sources and
 triggering symlink tree rebuilds. Runs on port 8080, single-threaded.
 
+On startup a rebuild is performed immediately so /merged/ is populated after
+a container restart. A SourceWatcher then monitors the configured source
+directories in the background and triggers an automatic rebuild after 30 s of
+filesystem quiet (debounced). All rebuild code paths — HTTP-triggered and
+watcher-triggered — are serialised through a module-level threading.Lock so
+concurrent rebuilds cannot occur.
+
 Endpoints:
     GET  /                      → static/index.html
     GET  /static/*              → files from static/
@@ -18,10 +25,12 @@ import json
 import logging
 import os
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import merger
+from watcher import SourceWatcher
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -41,6 +50,17 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level rebuild lock and watcher
+# ---------------------------------------------------------------------------
+
+# Serialises all rebuild calls regardless of whether they originate from an
+# HTTP handler or the background watcher thread.
+_rebuild_lock = threading.Lock()
+
+# Single SourceWatcher instance shared across the process lifetime.
+_watcher = SourceWatcher()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -210,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         result = self._do_rebuild(body)
+        _watcher.update_paths([s["path"] for s in body if s.get("path")])
         self._send_json({"status": "ok", **result})
 
     def _api_browse(self, browse_path):
@@ -268,18 +289,24 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
 
     def _do_rebuild(self, sources):
-        """Run merger.rebuild and return the stats dict."""
-        try:
-            result = merger.rebuild(sources, MERGED_DIR)
-            logger.info(
-                "Rebuild complete: %d systems, %d files",
-                len(result["systems"]),
-                result["total_files"],
-            )
-            return result
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Rebuild failed: %s", exc)
-            return {"systems": [], "total_files": 0, "error": str(exc)}
+        """Run merger.rebuild under the module-level lock and return the stats dict.
+
+        The lock prevents concurrent rebuilds from HTTP handlers and the
+        background watcher thread. Callers see identical return-value semantics
+        to the pre-lock version.
+        """
+        with _rebuild_lock:
+            try:
+                result = merger.rebuild(sources, MERGED_DIR)
+                logger.info(
+                    "Rebuild complete: %d systems, %d files",
+                    len(result["systems"]),
+                    result["total_files"],
+                )
+                return result
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Rebuild failed: %s", exc)
+                return {"systems": [], "total_files": 0, "error": str(exc)}
 
     def _read_json_body(self):
         """Read and parse the request body as JSON. Sends error response and
@@ -312,7 +339,53 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 
+def _watcher_rebuild_callback():
+    """Callback invoked by SourceWatcher after a debounce period.
+
+    Loads the current sources from disk and runs a rebuild under the shared
+    lock. Exceptions are caught so they cannot kill the background timer thread.
+    """
+    try:
+        sources = _load_sources()
+        with _rebuild_lock:
+            try:
+                result = merger.rebuild(sources, MERGED_DIR)
+                logger.info(
+                    "Auto-rebuild complete: %d systems, %d files",
+                    len(result["systems"]),
+                    result["total_files"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Auto-rebuild failed: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Watcher callback error: %s", exc)
+
+
 def main():
+    # ------------------------------------------------------------------
+    # Startup rebuild — populate /merged/ before accepting requests
+    # ------------------------------------------------------------------
+    logger.info("Running startup rebuild…")
+    sources = _load_sources()
+    try:
+        result = merger.rebuild(sources, MERGED_DIR)
+        logger.info(
+            "Startup rebuild complete: %d systems, %d files",
+            len(result["systems"]),
+            result["total_files"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Startup rebuild failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Start filesystem watcher
+    # ------------------------------------------------------------------
+    source_paths = [s["path"] for s in sources if s.get("path")]
+    _watcher.start(paths=source_paths, on_change_callback=_watcher_rebuild_callback)
+
+    # ------------------------------------------------------------------
+    # HTTP server
+    # ------------------------------------------------------------------
     server = HTTPServer(("", PORT), Handler)
     logger.info("retroshare backend listening on port %d", PORT)
     try:
@@ -320,6 +393,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Shutting down")
     finally:
+        _watcher.stop()
         server.server_close()
 
 
