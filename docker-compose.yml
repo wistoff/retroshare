@@ -12,7 +12,7 @@ services:
       - "7867:445"
       - "7868:8080"
     volumes:
-      - /mnt/user/data:/sources/local:ro
+      - /mnt/user/data:/sources/local:rw
       - /mnt/remotes/100.74.79.126_media:/sources/100.74.79.126_media:ro
       - /mnt/remotes/100.108.244.5_storage:/sources/100.108.244.5_storage:ro
       - /mnt/remotes/100.112.135.3_arr:/sources/100.112.135.3_arr:ro

@@ -14,6 +14,36 @@ import romident
 logger = logging.getLogger(__name__)
 
 
+def _maybe_rename_file(src_file, dest_name, local_source_path):
+    """Rename src_file to dest_name if it is on the local source and names differ.
+
+    Returns the (possibly updated) source file path after renaming.
+    """
+    if local_source_path is None:
+        return src_file
+    if not os.path.dirname(src_file).startswith(local_source_path):
+        return src_file
+    if dest_name == os.path.basename(src_file):
+        return src_file
+
+    new_src = os.path.join(os.path.dirname(src_file), dest_name)
+    if os.path.exists(new_src):
+        logger.warning(
+            "Rename skipped (target exists): %s -> %s",
+            os.path.basename(src_file),
+            dest_name,
+        )
+        return src_file
+
+    try:
+        os.rename(src_file, new_src)
+        logger.info("Renamed: %s -> %s", os.path.basename(src_file), dest_name)
+        return new_src
+    except OSError as exc:
+        logger.warning("Could not rename %s: %s", os.path.basename(src_file), exc)
+        return src_file
+
+
 def _clear_merged(merged_dir):
     """Remove all symlinks and empty directories under merged_dir (bottom-up).
 
@@ -51,7 +81,7 @@ def _clear_merged(merged_dir):
                 pass
 
 
-def rebuild(sources, merged_dir, config_dir=None):
+def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
     """Rebuild the symlink tree in merged_dir from sources.
 
     Args:
@@ -59,6 +89,9 @@ def rebuild(sources, merged_dir, config_dir=None):
         merged_dir: absolute path to the merge destination directory
         config_dir: optional path to the config directory; if provided,
             OpenVGDB is used to rename symlinks to canonical No-Intro names.
+        local_source_path: optional path to the local source (e.g.
+            "/sources/local"); if provided, identified ROMs in this source
+            will have their files renamed on disk to canonical names.
 
     Returns:
         dict with keys:
@@ -130,11 +163,20 @@ def rebuild(sources, merged_dir, config_dir=None):
 
                 # Attempt ROM identification to get a canonical symlink name.
                 dest_name = filename
+                is_zip = filename.lower().endswith(".zip")
                 if db_path is not None:
                     canonical = romident.identify_rom(db_path, src_file)
                     if canonical is not None and canonical != filename:
-                        logger.debug("Renamed: %s -> %s", filename, canonical)
+                        # For .zip files, append .zip so the symlink is named
+                        # e.g. "Super Mario World (USA).zip" instead of
+                        # "Super Mario World (USA)" (no extension).
+                        if is_zip:
+                            canonical = canonical + ".zip"
+                        logger.debug("Identified: %s -> %s", filename, canonical)
                         dest_name = canonical
+
+                # Rename the source file on disk if it is in the local source.
+                actual_src = _maybe_rename_file(src_file, dest_name, local_source_path)
 
                 dest_system_dir = os.path.join(merged_dir, system)
                 dest_file = os.path.join(dest_system_dir, dest_name)
@@ -151,7 +193,7 @@ def rebuild(sources, merged_dir, config_dir=None):
 
                 # Create the symlink
                 try:
-                    os.symlink(src_file, dest_file)
+                    os.symlink(actual_src, dest_file)
                     systems_with_files.add(system)
                     total_files += 1
                 except OSError as exc:

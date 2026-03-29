@@ -22,7 +22,7 @@ Endpoints:
     GET  /api/games                         → all games grouped by system with metadata
     POST /api/scrape                        → trigger full thumbnail scrape (synchronous)
     GET  /api/thumbnails/<system>/<file>    → serve cached thumbnail image
-    GET  /api/identify?path=<p>             → debug: CRC32 hash + OpenVGDB lookup for a file
+    GET  /api/identify?path=<p>             → debug: CRC32/MD5/SHA1 hashes + OpenVGDB lookup for a file
 """
 
 import json
@@ -46,6 +46,7 @@ PORT = 8080
 CONFIG_FILE = "/config/sources.json"
 MERGED_DIR = "/merged"
 SOURCES_ROOT = "/sources"
+SOURCES_LOCAL = "/sources/local"
 CACHE_FILE = "/config/gamecache.json"
 CACHE_DIR = "/config/thumbnails"
 
@@ -99,6 +100,14 @@ def _load_sources():
     except (json.JSONDecodeError, OSError) as exc:
         logger.error("Failed to load %s: %s", CONFIG_FILE, exc)
         return []
+
+
+def _get_local_source_path(sources):
+    """Return the path of the local source from sources, or None."""
+    for s in sources:
+        if s.get("path") == SOURCES_LOCAL:
+            return s["path"]
+    return None
 
 
 def _save_sources(sources):
@@ -399,15 +408,21 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            crc = romident.hash_rom(real_path)
+            hashes = romident.hash_rom(real_path)
         except OSError as exc:
             self._send_json({"error": f"hash failed: {exc}"}, status=500)
             return
 
-        canonical = romident.lookup_crc(db_path, crc)
+        if hashes is None:
+            self._send_json({"error": "hash failed: could not read file (corrupt zip?)"}, status=500)
+            return
+
+        canonical = romident.lookup_crc(db_path, hashes["crc32"])
         self._send_json({
             "path": real_path,
-            "crc32": crc,
+            "crc32": hashes["crc32"],
+            "md5": hashes["md5"],
+            "sha1": hashes["sha1"],
             "found": canonical is not None,
             "canonical": canonical,
         })
@@ -485,7 +500,11 @@ class Handler(BaseHTTPRequestHandler):
         rebuild_ok = False
         with _rebuild_lock:
             try:
-                result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
+                result = merger.rebuild(
+                    sources, MERGED_DIR,
+                    config_dir="/config",
+                    local_source_path=_get_local_source_path(sources),
+                )
                 logger.info(
                     "Rebuild complete: %d systems, %d files",
                     len(result["systems"]),
@@ -543,7 +562,11 @@ def _watcher_rebuild_callback():
         rebuild_ok = False
         with _rebuild_lock:
             try:
-                result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
+                result = merger.rebuild(
+                    sources, MERGED_DIR,
+                    config_dir="/config",
+                    local_source_path=_get_local_source_path(sources),
+                )
                 logger.info(
                     "Auto-rebuild complete: %d systems, %d files",
                     len(result["systems"]),
@@ -566,7 +589,11 @@ def main():
     logger.info("Running startup rebuild…")
     sources = _load_sources()
     try:
-        result = merger.rebuild(sources, MERGED_DIR, config_dir="/config")
+        result = merger.rebuild(
+            sources, MERGED_DIR,
+            config_dir="/config",
+            local_source_path=_get_local_source_path(sources),
+        )
         logger.info(
             "Startup rebuild complete: %d systems, %d files",
             len(result["systems"]),

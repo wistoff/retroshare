@@ -8,6 +8,7 @@ so that custom-named ROMs can be matched to Libretro thumbnails.
 OpenVGDB releases: https://github.com/OpenVGDB/OpenVGDB/releases
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -29,8 +30,15 @@ _USER_AGENT = "retroshare/1.0"
 _TIMEOUT = 60  # seconds — the zip is ~30 MB
 _CHUNK_SIZE = 1 << 20  # 1 MiB read chunks for hashing and downloading
 
-# NES iNES header size (bytes to skip before hashing)
-_INES_HEADER_SIZE = 16
+# Header sizes (bytes to skip before hashing) keyed by lowercase file extension.
+# Extensions not listed here default to 0 (no header skip).
+# .sfc and .smc use dynamic SNES copier-header detection instead (see hash_rom).
+_HEADER_SKIP = {
+    ".nes": 16,   # iNES header
+    ".fds": 16,   # fwNES header
+    ".lnx": 64,   # Atari Lynx header
+    ".a78": 128,  # Atari 7800 header
+}
 
 
 # ---------------------------------------------------------------------------
@@ -154,64 +162,197 @@ def _extract_db(zip_path, dest_path):
 # ---------------------------------------------------------------------------
 
 
-def hash_rom(filepath):
-    """Compute the CRC32 hash of a ROM file.
+def _snes_header_skip(data_size):
+    """Return the number of bytes to skip for a SNES ROM based on its size.
 
-    NES ROMs (.nes) have a 16-byte iNES header that is skipped before
-    hashing, matching the convention used by No-Intro and OpenVGDB.
-    All other formats are hashed in full.
+    SNES copier headers are 512 bytes and are present when the file size
+    modulo 1024 equals 512.  Returns 512 if a copier header is detected,
+    0 otherwise.
+    """
+    return 512 if data_size % 1024 == 512 else 0
+
+
+def _compute_hashes(data, skip_bytes):
+    """Compute CRC32, MD5, and SHA1 over data[skip_bytes:] in a single pass.
 
     Args:
-        filepath: Path to the ROM file.
+        data:       bytes-like object containing the full ROM data.
+        skip_bytes: number of leading bytes to ignore.
 
     Returns:
-        Uppercase hex CRC32 string, e.g. "A1B2C3D4".
-
-    Raises:
-        OSError if the file cannot be read.
+        dict with keys "crc32", "md5", "sha1" (all uppercase hex strings).
     """
-    _, ext = os.path.splitext(filepath)
-    skip_bytes = _INES_HEADER_SIZE if ext.lower() == ".nes" else 0
-
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
     crc = 0
-    with open(filepath, "rb") as fh:
-        if skip_bytes:
-            fh.read(skip_bytes)  # discard iNES header
-        while True:
-            chunk = fh.read(_CHUNK_SIZE)
-            if not chunk:
-                break
-            crc = zlib.crc32(chunk, crc)
 
-    # zlib.crc32 may return a signed integer on some platforms; mask to uint32.
-    return format(crc & 0xFFFFFFFF, "08X")
+    view = memoryview(data)[skip_bytes:]
+    offset = 0
+    total = len(view)
+    while offset < total:
+        chunk = bytes(view[offset : offset + _CHUNK_SIZE])
+        crc = zlib.crc32(chunk, crc)
+        md5.update(chunk)
+        sha1.update(chunk)
+        offset += _CHUNK_SIZE
+
+    return {
+        "crc32": format(crc & 0xFFFFFFFF, "08X"),
+        "md5": md5.hexdigest().upper(),
+        "sha1": sha1.hexdigest().upper(),
+    }
 
 
-# ---------------------------------------------------------------------------
-# 3. lookup_crc — look up a CRC32 in OpenVGDB
-# ---------------------------------------------------------------------------
+def _compute_hashes_stream(fh, skip_bytes):
+    """Compute CRC32, MD5, and SHA1 by streaming an open file handle.
 
-
-def lookup_crc(db_path, crc_hex):
-    """Look up a CRC32 hash in the OpenVGDB SQLite database.
+    Seeks to skip_bytes first, then reads the remainder in _CHUNK_SIZE chunks
+    so that arbitrarily large files (e.g. PS1 .bin disc images) are never
+    fully loaded into memory.
 
     Args:
-        db_path: Path to openvgdb.sqlite.
-        crc_hex: Uppercase hex CRC32 string, e.g. "A1B2C3D4".
+        fh:         A binary file handle opened for reading.
+        skip_bytes: Number of leading bytes to skip (via seek).
+
+    Returns:
+        dict with keys "crc32", "md5", "sha1" (all uppercase hex strings).
+    """
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    crc = 0
+
+    fh.seek(skip_bytes)
+    while True:
+        chunk = fh.read(_CHUNK_SIZE)
+        if not chunk:
+            break
+        crc = zlib.crc32(chunk, crc)
+        md5.update(chunk)
+        sha1.update(chunk)
+
+    return {
+        "crc32": format(crc & 0xFFFFFFFF, "08X"),
+        "md5": md5.hexdigest().upper(),
+        "sha1": sha1.hexdigest().upper(),
+    }
+
+
+def hash_rom(filepath):
+    """Compute CRC32, MD5, and SHA1 hashes of a ROM file.
+
+    Header stripping:
+    - .nes / .fds: skip 16 bytes (iNES / fwNES header)
+    - .lnx:        skip 64 bytes (Atari Lynx header)
+    - .a78:        skip 128 bytes (Atari 7800 header)
+    - .sfc / .smc: skip 512 bytes only when filesize % 1024 == 512
+                   (SNES copier / SMC header detection)
+    - all others:  no skip
+
+    Zip support:
+    - If the file extension is .zip, the first entry in the archive is
+      extracted and hashed.  Header skipping uses the inner file's extension.
+      Returns None (with a warning) if the zip is corrupt or unreadable.
+
+    Args:
+        filepath: Path to the ROM file (or .zip containing a ROM).
+
+    Returns:
+        dict {"crc32": ..., "md5": ..., "sha1": ...} with uppercase hex
+        strings, or None if a zip could not be read.
+
+    Raises:
+        OSError if a non-zip file cannot be read.
+    """
+    _, ext = os.path.splitext(filepath)
+    ext = ext.lower()
+
+    if ext == ".zip":
+        # --- Zip handling ---
+        try:
+            with zipfile.ZipFile(filepath, "r") as zf:
+                names = zf.namelist()
+                if not names:
+                    logger.warning("Empty zip archive: %s", filepath)
+                    return None
+                inner_name = names[0]
+                inner_info = zf.getinfo(inner_name)
+                _, inner_ext = os.path.splitext(inner_name)
+                inner_ext = inner_ext.lower()
+
+                data = zf.read(inner_name)
+        except zipfile.BadZipFile as exc:
+            logger.warning("Corrupt zip archive %s: %s", filepath, exc)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read zip archive %s: %s", filepath, exc)
+            return None
+
+        # Determine header skip using the inner file's extension and size.
+        if inner_ext in (".sfc", ".smc"):
+            # Use the uncompressed size from zip metadata for SNES detection.
+            skip_bytes = _snes_header_skip(inner_info.file_size)
+        else:
+            skip_bytes = _HEADER_SKIP.get(inner_ext, 0)
+
+        return _compute_hashes(data, skip_bytes)
+
+    # --- Regular file handling (streaming — never loads the whole file) ---
+    # Determine the header skip before opening the file so we can seek past it.
+    if ext in (".sfc", ".smc"):
+        # Use the on-disk file size to detect a SNES copier header without
+        # reading any file data.
+        skip_bytes = _snes_header_skip(os.path.getsize(filepath))
+    else:
+        skip_bytes = _HEADER_SKIP.get(ext, 0)
+
+    with open(filepath, "rb") as fh:
+        return _compute_hashes_stream(fh, skip_bytes)
+
+
+# ---------------------------------------------------------------------------
+# 3. lookup_rom — look up a ROM hash in OpenVGDB
+# ---------------------------------------------------------------------------
+
+_HASH_COLUMN_MAP = {
+    "crc32": "romHashCRC",
+    "md5": "romHashMD5",
+    "sha1": "romHashSHA1",
+}
+
+
+def lookup_rom(db_path, hash_type, hash_hex):
+    """Look up a ROM hash in the OpenVGDB SQLite database.
+
+    Args:
+        db_path:    Path to openvgdb.sqlite.
+        hash_type:  One of "crc32", "md5", or "sha1".
+        hash_hex:   Uppercase hex hash string.
 
     Returns:
         Canonical No-Intro filename string (e.g.
         "Kirby - Nightmare in Dream Land (USA).gba"), or None if not found.
     """
+    column = _HASH_COLUMN_MAP.get(hash_type)
+    if column is None:
+        return None
+
     uri = "file:{}?mode=ro".format(urllib.request.pathname2url(os.path.abspath(db_path)))
     with sqlite3.connect(uri, uri=True) as conn:
         cur = conn.execute(
-            "SELECT romFileName FROM ROMs WHERE romHashCRC = ? LIMIT 1",
-            (crc_hex.upper(),),
+            f"SELECT romFileName FROM ROMs WHERE {column} = ? LIMIT 1",
+            (hash_hex.upper(),),
         )
         row = cur.fetchone()
 
     return row[0] if row is not None else None
+
+
+def lookup_crc(db_path, crc_hex):
+    """Look up a CRC32 hash in the OpenVGDB SQLite database.
+
+    Alias for lookup_rom(db_path, "crc32", crc_hex).
+    """
+    return lookup_rom(db_path, "crc32", crc_hex)
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +363,8 @@ def lookup_crc(db_path, crc_hex):
 def identify_rom(db_path, filepath):
     """Hash a ROM file and look it up in OpenVGDB.
 
+    Tries CRC32 first, then falls back to MD5, then SHA1.
+
     Args:
         db_path:  Path to openvgdb.sqlite.
         filepath: Path to the ROM file.
@@ -230,9 +373,18 @@ def identify_rom(db_path, filepath):
         Canonical No-Intro filename string, or None if not found or on error.
     """
     try:
-        crc = hash_rom(filepath)
+        hashes = hash_rom(filepath)
     except OSError as exc:
         logger.warning("Could not hash %s: %s", filepath, exc)
         return None
 
-    return lookup_crc(db_path, crc)
+    if hashes is None:
+        return None
+
+    for hash_type in ("crc32", "md5", "sha1"):
+        result = lookup_rom(db_path, hash_type, hashes[hash_type])
+        if result is not None:
+            logger.debug("Identified %s via %s: %s", filepath, hash_type, result)
+            return result
+
+    return None
