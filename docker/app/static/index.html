@@ -582,6 +582,39 @@
       transform: translateY(-2px);
     }
 
+    .game-card-wrap {
+      position: relative;
+    }
+
+    .game-card-wrap:hover .game-tooltip {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .game-tooltip {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s, transform 0.15s;
+      z-index: 10;
+      box-shadow: var(--shadow);
+      color: var(--text-muted);
+    }
+
+    .game-tooltip strong {
+      color: var(--text);
+    }
+
     .game-thumb-wrap {
       position: relative;
       width: 100%;
@@ -1182,10 +1215,17 @@
       ? `<img src="${escHtml(game.thumbnail)}" alt="${escHtml(game.title || game.filename)}" loading="lazy" onload="this.classList.add('loaded')" />`
       : `<div class="game-thumb-placeholder" aria-hidden="true">🎮</div>`;
 
+    const tooltipHtml = game.share
+      ? `<div class="game-tooltip">Source: <strong>${escHtml(game.share)}</strong></div>`
+      : '';
+
     return `
-      <div class="game-card" title="${escHtml(game.title || game.filename)}">
-        <div class="game-thumb-wrap ${aspectClass}">${thumbHtml}</div>
-        <div class="game-title">${escHtml(game.title || game.filename)}</div>
+      <div class="game-card-wrap">
+        <div class="game-card" title="${escHtml(game.title || game.filename)}">
+          <div class="game-thumb-wrap ${aspectClass}">${thumbHtml}</div>
+          <div class="game-title">${escHtml(game.title || game.filename)}</div>
+        </div>
+        ${tooltipHtml}
       </div>`;
   }
 

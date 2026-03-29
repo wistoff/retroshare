@@ -338,8 +338,6 @@ class Handler(BaseHTTPRequestHandler):
                                 title = entry.get("title") or os.path.splitext(filename)[0]
                                 thumb_rel = entry.get("thumbnail")
                                 if thumb_rel:
-                                    # thumb_rel is e.g. "snes/Super Mario World (USA).png"
-                                    # Build URL with percent-encoded filename component only.
                                     thumb_filename = os.path.basename(thumb_rel)
                                     thumbnail_url = (
                                         f"/api/thumbnails/{quote(system_name, safe='')}"
@@ -352,12 +350,27 @@ class Handler(BaseHTTPRequestHandler):
                                 title = os.path.splitext(filename)[0]
                                 thumbnail_url = None
                                 scraped = False
+
+                            share_name = None
+                            try:
+                                target = os.readlink(file_entry.path)
+                                if target:
+                                    parts = target.split(os.sep)
+                                    for i, p in enumerate(parts):
+                                        if p in ("sources", "roms", "media"):
+                                            if i + 1 < len(parts):
+                                                share_name = parts[i + 1]
+                                                break
+                            except OSError:
+                                pass
+
                             games.append(
                                 {
                                     "filename": filename,
                                     "title": title,
                                     "thumbnail": thumbnail_url,
                                     "scraped": scraped,
+                                    "share": share_name,
                                 }
                             )
                     except OSError as exc:
