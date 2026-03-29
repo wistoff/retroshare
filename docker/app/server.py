@@ -578,6 +578,16 @@ def _watcher_rebuild_callback():
 
         if rebuild_ok:
             scraper.prune_cache(CACHE_FILE, MERGED_DIR)
+            try:
+                stats = scraper.scrape_all(MERGED_DIR, CACHE_FILE, CACHE_DIR)
+                logger.info(
+                    "Auto-scrape complete: %d scraped, %d failed, %d skipped",
+                    stats.get("scraped", 0),
+                    stats.get("failed", 0),
+                    stats.get("skipped", 0),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Auto-scrape failed: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.error("Watcher callback error: %s", exc)
 
@@ -600,6 +610,16 @@ def main():
             result["total_files"],
         )
         scraper.prune_cache(CACHE_FILE, MERGED_DIR)
+        try:
+            stats = scraper.scrape_all(MERGED_DIR, CACHE_FILE, CACHE_DIR)
+            logger.info(
+                "Startup scrape complete: %d scraped, %d failed, %d skipped",
+                stats.get("scraped", 0),
+                stats.get("failed", 0),
+                stats.get("skipped", 0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Startup scrape failed: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.error("Startup rebuild failed: %s", exc)
 

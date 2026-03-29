@@ -697,14 +697,31 @@
 
   <!-- ── Tab navigation ──────────────────────────────────────────────── -->
   <nav class="tab-nav" role="tablist">
-    <button class="tab-btn active" id="tab-btn-sources" role="tab" aria-selected="true"
-            onclick="switchTab('sources')">Sources</button>
-    <button class="tab-btn" id="tab-btn-games" role="tab" aria-selected="false"
+    <button class="tab-btn active" id="tab-btn-games" role="tab" aria-selected="true"
             onclick="switchTab('games')">Games</button>
+    <button class="tab-btn" id="tab-btn-sources" role="tab" aria-selected="false"
+            onclick="switchTab('sources')">Sources</button>
   </nav>
 
+  <!-- ── Games tab ────────────────────────────────────────────────────── -->
+  <div id="tab-games">
+
+    <div class="games-header">
+      <div class="games-header-left">
+        <h2>Game Library</h2>
+        <span class="games-count" id="games-count"></span>
+      </div>
+      <button class="btn-primary" id="scrape-btn" onclick="triggerRebuildAndScrape()">⟳ Rebuild &amp; Scrape</button>
+    </div>
+
+    <div id="games-list">
+      <div class="games-loading"><span class="spinner"></span> Loading games…</div>
+    </div>
+
+  </div><!-- /#tab-games -->
+
   <!-- ── Sources tab ──────────────────────────────────────────────────── -->
-  <div id="tab-sources">
+  <div id="tab-sources" style="display:none">
 
     <div class="section-header">
       <h2>ROM Sources</h2>
@@ -724,23 +741,6 @@
     </div>
 
   </div><!-- /#tab-sources -->
-
-  <!-- ── Games tab ────────────────────────────────────────────────────── -->
-  <div id="tab-games" style="display:none">
-
-    <div class="games-header">
-      <div class="games-header-left">
-        <h2>Game Library</h2>
-        <span class="games-count" id="games-count"></span>
-      </div>
-      <button class="btn-primary" id="scrape-btn" onclick="scrapeGames()">🖼 Scrape Thumbnails</button>
-    </div>
-
-    <div id="games-list">
-      <div class="games-loading"><span class="spinner"></span> Loading games…</div>
-    </div>
-
-  </div><!-- /#tab-games -->
 
 </div><!-- /.app -->
 
@@ -801,7 +801,7 @@
 
   /* ── Init ───────────────────────────────────────────────────────────── */
   async function init() {
-    await Promise.all([loadSources(), loadStatus()]);
+    await Promise.all([loadSources(), loadStatus(), loadGames()]);
   }
 
   /* ── API helpers ────────────────────────────────────────────────────── */
@@ -1075,13 +1075,13 @@
   /* ── Tab navigation ─────────────────────────────────────────────────── */
   function switchTab(tab) {
     const isGames = tab === 'games';
-    document.getElementById('tab-sources').style.display = isGames ? 'none' : '';
     document.getElementById('tab-games').style.display   = isGames ? '' : 'none';
+    document.getElementById('tab-sources').style.display = isGames ? 'none' : '';
 
-    document.getElementById('tab-btn-sources').classList.toggle('active', !isGames);
-    document.getElementById('tab-btn-sources').setAttribute('aria-selected', String(!isGames));
     document.getElementById('tab-btn-games').classList.toggle('active', isGames);
     document.getElementById('tab-btn-games').setAttribute('aria-selected', String(isGames));
+    document.getElementById('tab-btn-sources').classList.toggle('active', !isGames);
+    document.getElementById('tab-btn-sources').setAttribute('aria-selected', String(!isGames));
 
     if (isGames) loadGames();
   }
@@ -1189,30 +1189,35 @@
       </div>`;
   }
 
-  /* ── Scrape thumbnails ───────────────────────────────────────────────── */
-  async function scrapeGames() {
+  /* ── Rebuild + Scrape (combined action) ───────────────────────────────── */
+  async function triggerRebuildAndScrape() {
     const btn = document.getElementById('scrape-btn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Scraping…';
+    btn.innerHTML = '<span class="spinner"></span> Rebuilding…';
 
     try {
-      const result = await apiFetch('/api/scrape', { method: 'POST' });
-      const scraped  = result.scraped  || 0;
-      const failed   = result.failed   || 0;
-      const skipped  = result.skipped  || 0;
+      const rebuildResult = await apiFetch('/api/rebuild', { method: 'POST' });
+      await loadStatus();
+
+      btn.innerHTML = '<span class="spinner"></span> Scraping…';
+      const scrapeResult = await apiFetch('/api/scrape', { method: 'POST' });
+
+      const scraped  = scrapeResult.scraped  || 0;
+      const failed   = scrapeResult.failed   || 0;
+      const skipped  = scrapeResult.skipped  || 0;
       const parts = [];
       if (scraped > 0)  parts.push(`${scraped} new thumbnail${scraped !== 1 ? 's' : ''}`);
       if (skipped > 0)  parts.push(`${skipped} already cached`);
       if (failed > 0)   parts.push(`${failed} failed`);
       const msg = parts.length ? `Scraped: ${parts.join(', ')}` : 'Scrape complete.';
       showToast(msg, failed > 0 ? '' : 'success');
-      // Reload games to show newly fetched thumbnails
+
       await loadGames();
     } catch (e) {
-      showToast(`Scrape failed: ${e.message}`, 'error');
+      showToast(`Rebuild/Scrape failed: ${e.message}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '🖼 Scrape Thumbnails';
+      btn.textContent = '⟳ Rebuild & Scrape';
     }
   }
 
