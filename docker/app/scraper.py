@@ -11,11 +11,16 @@ URL pattern:
 ROM filenames follow No-Intro naming (e.g. "Super Mario World (USA).sfc").
 Libretro thumbnail filenames use the same base name without extension, with
 "&" replaced by "_" before URL-encoding.
+
+When the direct thumbnail lookup fails, fuzzy matching tries alternative
+name variants (stripping metadata, trying alternate region codes) to find
+a match in the Libretro database.
 """
 
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -86,6 +91,106 @@ _CDN_BASE = "https://thumbnails.libretro.com"
 _USER_AGENT = "retroshare/1.0"
 _TIMEOUT = 10  # seconds
 
+_REGION_CODES = {
+    "USA", "Japan", "Europe", "World",
+    "France", "Germany", "Spain", "Italy", "UK", "Australia",
+    "Brazil", "Canada", "China", "Korea", "Russia",
+    "Netherlands", "Sweden", "Denmark", "Norway", "Finland",
+    "Belgium", "Switzerland", "Austria",
+}
+
+_REGION_ALIASES = {
+    "Europe": ["(E)"],
+    "USA": ["(U)"],
+    "Japan": ["(J)"],
+    "World": ["(W)"],
+    "France": ["(F)", "(Fr)"],
+    "Germany": ["(D)", "(De)"],
+    "Italy": ["(I)", "(It)"],
+    "Spain": ["(S)", "(Es)"],
+    "UK": ["(UK)", "(En)"],
+    "Australia": ["(A)", "(Au)"],
+    "Brazil": ["(B)", "(Br)"],
+    "Netherlands": ["(NL)", "(Du)"],
+    "Sweden": ["(Sw)"],
+    "Denmark": ["(Da)"],
+    "Norway": ["(No)"],
+    "Finland": ["(Fi)"],
+    "Belgium": ["(Be)"],
+    "Switzerland": ["(Sz)", "(Ch)"],
+    "Austria": ["(At)"],
+    "Canada": ["(Ca)"],
+    "China": ["(Cn)"],
+    "Korea": ["(K)"],
+    "Russia": ["(R)"],
+}
+
+
+def _generate_candidates(name):
+    """Generate candidate thumbnail names from a ROM name.
+
+    Tries progressively more stripped-down versions to match Libretro's
+    thumbnail naming conventions. Includes alternate region code variants.
+    """
+    candidates = set()
+
+    segments = re.split(r"(\s*\([^)]+\))", name)
+    parts = [s.strip() for s in segments if s.strip()]
+
+    title_parts = []
+    region_parts = []
+
+    for p in parts:
+        m = re.match(r"^\(([^)]+)\)$", p)
+        if m and m.group(1) in _REGION_CODES:
+            region_parts.append(p)
+        elif m:
+            continue
+        else:
+            title_parts.append(p)
+
+    base_title = " ".join(title_parts).strip()
+
+    if not base_title:
+        return []
+
+    if region_parts:
+        candidates.add(base_title + " " + " ".join(region_parts))
+        for rp in region_parts:
+            m2 = re.match(r"^\(([^)]+)\)$", rp)
+            if m2:
+                canonical = m2.group(1)
+                for alias in _REGION_ALIASES.get(canonical, []):
+                    alias_paren = alias if alias.startswith("(") else f"({alias})"
+                    if alias_paren != rp:
+                        candidates.add(f"{base_title} {alias_paren}")
+    candidates.add(base_title)
+
+    return list(candidates)
+
+
+def _try_url(url, dest_file, dest_dir):
+    """Attempt to download a thumbnail from a URL.
+
+    Returns (rel_path, debug_msg) on success, (None, debug_msg) on failure.
+    """
+    os.makedirs(dest_dir, exist_ok=True)
+
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            data = resp.read()
+        with open(dest_file, "wb") as fh:
+            fh.write(data)
+        return (dest_file, None)
+    except urllib.error.HTTPError as exc:
+        msg = f"HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        msg = f"Network error: {exc.reason}"
+    except OSError as exc:
+        msg = f"OS error: {exc}"
+    return (None, msg)
+
 
 def rom_name_to_thumbnail_name(filename):
     """Strip the file extension from a ROM filename.
@@ -133,67 +238,105 @@ def get_thumbnail_url(system_folder, rom_filename):
 # ---------------------------------------------------------------------------
 
 
-def download_thumbnail(system_folder, rom_filename, cache_dir):
+def download_thumbnail(system_folder, rom_filename, cache_dir, original_filename=None):
     """Download a thumbnail PNG to cache_dir/system_folder/thumbnail_name.png.
 
     Skips the download if the file already exists (cache hit).
+    On 404, tries fuzzy-matched candidate names (from original filename) before giving up.
 
     Args:
         system_folder: ROM folder name, e.g. "snes"
-        rom_filename:  ROM filename, e.g. "Super Mario World (USA).sfc"
+        rom_filename:  Clean canonical ROM filename, e.g. "Super Mario World (USA).sfc"
         cache_dir:     Root directory for cached thumbnails
+        original_filename: Optional original filename with full metadata, e.g.
+                          "Super Mario World (USA) (En,Fr,De,Es,It).sfc"
 
     Returns:
         Relative path string (e.g. "snes/Super Mario World (USA).png") on
         success or cache hit, None on failure (404, network error, etc.).
     """
-    url = get_thumbnail_url(system_folder, rom_filename)
-    if url is None:
-        logger.info(
-            "Skip %s/%s — system not in SYSTEM_MAP", system_folder, rom_filename
-        )
+    libretro_system = SYSTEM_MAP.get(system_folder.lower())
+    if libretro_system is None:
+        logger.info("Skip %s/%s — system not in SYSTEM_MAP", system_folder, rom_filename)
         return None
 
     thumbnail_name = rom_name_to_thumbnail_name(rom_filename)
+    encoded_system = urllib.parse.quote(libretro_system, safe="")
+
     dest_dir = os.path.join(cache_dir, system_folder)
     dest_file = os.path.join(dest_dir, thumbnail_name + ".png")
     rel_path = os.path.join(system_folder, thumbnail_name + ".png")
 
-    # Cache hit — skip download.
     if os.path.isfile(dest_file):
         logger.info("Cache hit: %s", rel_path)
         return rel_path
 
-    os.makedirs(dest_dir, exist_ok=True)
+    candidates = [(thumbnail_name, thumbnail_name + ".png")]
+    seen = {thumbnail_name}
 
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = resp.read()
-        with open(dest_file, "wb") as fh:
-            fh.write(data)
-        logger.info("Downloaded: %s", rel_path)
-        return rel_path
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            logger.info(
-                "No thumbnail found (404): %s/%s", system_folder, rom_filename
-            )
-        else:
-            logger.info(
-                "HTTP error %d for %s/%s", exc.code, system_folder, rom_filename
-            )
-        return None
-    except urllib.error.URLError as exc:
-        logger.info(
-            "Network error for %s/%s: %s", system_folder, rom_filename, exc.reason
-        )
-        return None
-    except OSError as exc:
-        logger.info(
-            "File write error for %s/%s: %s", system_folder, rom_filename, exc
-        )
-        return None
+    def _add(cand):
+        if cand and cand not in seen:
+            candidates.append((cand, cand + ".png"))
+            seen.add(cand)
+
+    _LIBRETRO_REGION_COMBOS = [
+        "(Europe)", "(USA)", "(Japan)", "(World)",
+        "(USA, Europe)", "(Europe) (En,Fr,De,Es,It)",
+        "(Europe) (En,Fr,De)", "(USA) (En,Ja)",
+        "(Japan) (En,Ja)", "(Europe) (En)",
+        "(Europe) (En,Ja,Fr,De,Es,It)",
+    ]
+
+    if original_filename:
+        orig_base = rom_name_to_thumbnail_name(original_filename)
+        _add(orig_base)
+
+        for cand in _generate_candidates(orig_base):
+            _add(cand)
+
+        for base in [orig_base] + _generate_candidates(orig_base):
+            _add(base.replace("&", "And"))
+            _add(base.replace("And", "&"))
+
+        segments = re.split(r"(\s*\([^)]+\))", orig_base)
+        base_title = " ".join(s.strip() for s in segments if s.strip() and not re.match(r"^\s*\([^)]+\)\s*$", s.strip())).strip()
+        _add(base_title)
+        _add(base_title.replace("&", "And"))
+        _add(base_title.replace("And", "&"))
+
+        for base in [orig_base, base_title]:
+            for combo in _LIBRETRO_REGION_COMBOS:
+                _add(f"{base} {combo}")
+                _add(f"{base.replace('&', 'And')} {combo}")
+                _add(f"{base.replace('And', '&')} {combo}")
+
+    for cand in _generate_candidates(thumbnail_name):
+        _add(cand)
+    _add(thumbnail_name.replace("&", "And"))
+    _add(thumbnail_name.replace("And", "&"))
+
+    for thumb_name, thumb_file in candidates:
+        thumb_name_encoded = thumb_name.replace("&", "_")
+        thumb_name_encoded = urllib.parse.quote(thumb_name_encoded, safe="")
+        url = f"{_CDN_BASE}/{encoded_system}/Named_Boxarts/{thumb_name_encoded}.png"
+
+        logger.debug("Trying URL: %s", url)
+        result, err = _try_url(url, dest_file, dest_dir)
+
+        if result is not None:
+            if thumb_file == thumbnail_name + ".png":
+                logger.info("Downloaded: %s", rel_path)
+            else:
+                logger.info("Downloaded (fuzzy match): %s (tried '%s')", rel_path, thumb_name)
+            return rel_path
+
+        logger.debug("Failed '%s': %s", thumb_name, err)
+
+    logger.warning(
+        "All thumbnail attempts failed for %s/%s (tried %d candidates)",
+        system_folder, rom_filename, len(candidates),
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +476,7 @@ def scrape_all(merged_dir, cache_file, cache_dir, on_progress=None):
     cache = load_cache(cache_file)
 
     # Collect all games first so we can report accurate totals.
-    games = []  # list of (system_folder, rom_filename)
+    games = []  # list of (system_folder, rom_filename, original_filename)
     if os.path.isdir(merged_dir):
         try:
             for system_entry in sorted(os.scandir(merged_dir), key=lambda e: e.name):
@@ -349,7 +492,11 @@ def scrape_all(merged_dir, cache_file, cache_dir, on_progress=None):
                             continue
                         if file_entry.is_dir(follow_symlinks=False):
                             continue
-                        games.append((system_entry.name, file_entry.name))
+                        original_filename = None
+                        if file_entry.is_symlink():
+                            target = os.readlink(file_entry.path)
+                            original_filename = os.path.basename(target)
+                        games.append((system_entry.name, file_entry.name, original_filename))
                 except OSError as exc:
                     logger.warning(
                         "Cannot list system dir %s: %s", system_entry.path, exc
@@ -363,7 +510,7 @@ def scrape_all(merged_dir, cache_file, cache_dir, on_progress=None):
     failed = 0
     first_download = True
 
-    for idx, (system_folder, rom_filename) in enumerate(games, start=1):
+    for idx, (system_folder, rom_filename, original_filename) in enumerate(games, start=1):
         cache_key = f"{system_folder}/{rom_filename}"
         game_name = rom_name_to_thumbnail_name(rom_filename)
 
@@ -380,7 +527,7 @@ def scrape_all(merged_dir, cache_file, cache_dir, on_progress=None):
             time.sleep(1)
         first_download = False
 
-        rel_path = download_thumbnail(system_folder, rom_filename, cache_dir)
+        rel_path = download_thumbnail(system_folder, rom_filename, cache_dir, original_filename)
 
         if rel_path is not None:
             cache[cache_key] = {"title": game_name, "thumbnail": rel_path}
