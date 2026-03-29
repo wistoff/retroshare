@@ -87,12 +87,31 @@ The script connects to the server, discovers matching system folders, and downlo
 ## How it works
 
 ### Docker app
-1. Sources are bind-mounted read-only into the container at `/sources/`
-2. The merger scans each source for system folders and creates a symlink tree at `/merged/`
-3. Overlapping system folders are merged — duplicate filenames use first-source-wins
-4. Samba shares `/merged/` as a guest-accessible read-only share
 
-### Sync script
+**Merger** (`merger.py`):
+1. Sources are bind-mounted read-only into the container at `/sources/`
+2. Scans each source for system folders (top-level subdirectories)
+3. For each ROM file, queries [OpenVGDB](https://github.com/OpenVGDB/OpenVGDB) to get the canonical No-Intro name
+4. Cleans the canonical name: strips verbose metadata (`(En,Fr,De,Es,It)`, publisher/date tags), keeps standard region codes (`(USA)`, `(Europe)`, etc.), capitalizes "The"
+5. Extension handling: if the canonical name has an extension, use it; otherwise preserve the source file's extension (important for `.zip` containers)
+6. Creates a symlink tree at `/merged/system/filename` — first-source-wins on duplicates
+7. Samba shares `/merged/` as a guest-accessible read-only share
+
+**Scraper** (`scraper.py`):
+1. Walks the merged symlink tree
+2. For each ROM, reads the symlink target to recover the original filename (with full metadata)
+3. Attempts thumbnail download from [Libretro's CDN](https://thumbnails.libretro.com/):
+   - Tries the clean canonical name first
+   - Falls back to the original filename with its metadata
+   - Strips all metadata, then tries base title + common Libretro region combos (`(Europe)`, `(Europe) (En,Fr,De,Es,It)`, `(USA)`, etc.)
+   - Also tries `&` ↔ `And` variations
+4. On a match, saves the PNG to `/config/thumbnails/` and records it in `/config/gamecache.json`
+5. Rate-limited to 1 request/second to avoid hammering the CDN
+
+**API** (`server.py`):
+- Serves the merged ROM list and cached thumbnail metadata as JSON at `http://<ip>:7868/`
+
+### Sync script (R36S)
 1. **Connect** — connects to the Samba share using `smbclient` with guest access
 2. **Discover** — lists system folders on the server and matches them with folders on the console
 3. **Sync** — downloads only files not already present on the console
