@@ -559,6 +559,7 @@
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 14px;
+      align-items: start;
     }
 
     @media (max-width: 600px) {
@@ -584,26 +585,39 @@
     .game-thumb-wrap {
       position: relative;
       width: 100%;
-      padding-top: 133%;
       background: var(--surface2);
       overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      aspect-ratio: 3 / 4;
     }
 
-    .game-thumb-wrap img {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background: var(--surface2);
+    .game-thumb-wrap.aspect-tall {
+      aspect-ratio: 3 / 4;
     }
 
     .game-thumb-wrap.aspect-square {
-      padding-top: 100%;
+      aspect-ratio: 1 / 1;
     }
 
     .game-thumb-wrap.aspect-wide {
-      padding-top: 75%;
+      aspect-ratio: 4 / 3;
+    }
+
+    .game-thumb-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .game-thumb-wrap img {
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .game-thumb-wrap img.loaded {
+      opacity: 1;
     }
 
     .game-thumb-placeholder {
@@ -1119,21 +1133,53 @@
       </div>`).join('');
   }
 
+  const ASPECT_MAP = {
+    'n64': 'wide',
+    'nes': 'tall',
+    'snes': 'tall',
+    'sfc': 'tall',
+    'gba': 'square',
+    'gb': 'square',
+    'gbc': 'square',
+    'nds': 'tall',
+    'psx': 'tall',
+    'psp': 'square',
+    'megadrive': 'tall',
+    'genesis': 'tall',
+    'mastersystem': 'tall',
+    'sms': 'tall',
+    'gamegear': 'square',
+    'gg': 'square',
+    'atari2600': 'tall',
+    'atari7800': 'tall',
+    'lynx': 'square',
+    'pce': 'tall',
+    'tg16': 'tall',
+    'pcengine': 'tall',
+    'wonderswan': 'square',
+    'ws': 'square',
+    'wonderswancolor': 'square',
+    'wsc': 'square',
+    'ngp': 'square',
+    'ngpc': 'square',
+    'arcade': 'wide',
+    'mame': 'wide',
+    'fba': 'wide',
+    'fbneo': 'wide',
+    'vectrex': 'tall',
+    'coleco': 'tall',
+    'colecovision': 'tall',
+  };
+
   function getAspectClass(systemName) {
-    const s = systemName.toLowerCase();
-    if (['gb', 'gbc', 'gba', 'gamegear', 'gg', 'lynx', 'wonderswan', 'ws', 'wonderswancolor', 'wsc', 'nds', 'psp'].includes(s)) {
-      return 'aspect-square';
-    }
-    if (['arcade', 'mame', 'fba', 'fbneo'].includes(s)) {
-      return 'aspect-wide';
-    }
-    return '';
+    const aspect = ASPECT_MAP[systemName.toLowerCase()];
+    return aspect ? `aspect-${aspect}` : '';
   }
 
   function renderGameCard(systemName, game) {
     const aspectClass = getAspectClass(systemName);
     const thumbHtml = game.thumbnail
-      ? `<img src="${escHtml(game.thumbnail)}" alt="${escHtml(game.title || game.filename)}" loading="lazy" />`
+      ? `<img src="${escHtml(game.thumbnail)}" alt="${escHtml(game.title || game.filename)}" loading="lazy" onload="this.classList.add('loaded')" />`
       : `<div class="game-thumb-placeholder" aria-hidden="true">🎮</div>`;
 
     return `
