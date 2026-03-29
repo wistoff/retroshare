@@ -1,10 +1,7 @@
 #!/bin/bash
 # Sync ROMs
-# Uses smbclient to list and download new ROMs from a Samba share.
-# Skips files already present on the console (by filename).
-
-CONFIG_FILE="/roms/tools/romsync.cfg"
-TEMP_DIR="/tmp/romsync_tmp"
+# Uses smbclient to list and download ROMs from a Samba share.
+# Modes: ADD (skip existing) or REPLACE (download missing, delete extra).
 
 # Auto-detect ROM destination: /roms2/ (GAMES SD card) or /roms/ (single SD)
 if [ -d "/roms2" ] && [ "$(ls -A /roms2 2>/dev/null)" ]; then
@@ -13,9 +10,13 @@ else
     LOCAL_ROMS="/roms"
 fi
 
+CONFIG_FILE="$LOCAL_ROMS/tools/romsync.cfg"
+TEMP_DIR="/tmp/romsync_tmp"
+
 SYSTEMS_SYNCED=0
 FILES_TRANSFERRED=0
 ERRORS=0
+FILES_DELETED=0
 
 echo "=== ROM Sync ==="
 echo ""
@@ -54,6 +55,7 @@ fi
 # Defaults for optional config values
 ROM_PATH="${ROM_PATH:-}"
 SMB_PORT="${SMB_PORT:-445}"
+SYNC_MODE="${SYNC_MODE:-}"
 
 # Build port flag for smbclient
 SMB_PORT_FLAG=""
@@ -61,11 +63,34 @@ if [ "$SMB_PORT" != "445" ]; then
     SMB_PORT_FLAG="-p $SMB_PORT"
 fi
 
-echo "Server : $SERVER_IP"
-echo "Share  : $SHARE_NAME"
-echo "Port   : $SMB_PORT"
-echo "Path   : $ROM_PATH"
-echo "Dest   : $LOCAL_ROMS"
+# ---------------------------------------------------------------------------
+# Sync mode selection
+# ---------------------------------------------------------------------------
+if [ -z "$SYNC_MODE" ]; then
+    echo "--- Sync Mode ---"
+    echo "  1) Add games     - Only download new files (skip existing)"
+    echo "  2) Replace games - Download missing files, delete files not on server"
+    echo ""
+    if [ -t 0 ]; then
+        printf "Select mode [1]: "
+        read -r mode_input
+        case "$mode_input" in
+            2) SYNC_MODE="REPLACE" ;;
+            *) SYNC_MODE="ADD" ;;
+        esac
+    else
+        echo "  (non-interactive: defaulting to ADD)"
+        SYNC_MODE="ADD"
+    fi
+    echo ""
+fi
+
+echo "Server  : $SERVER_IP"
+echo "Share   : $SHARE_NAME"
+echo "Port    : $SMB_PORT"
+echo "Path    : $ROM_PATH"
+echo "Dest    : $LOCAL_ROMS"
+echo "Mode    : $SYNC_MODE"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -110,12 +135,13 @@ _probe_auth() {
 smb_ls() {
     local remote_path="$1"
     local share="//$SERVER_IP/$SHARE_NAME"
+    local tmp_ls="$TEMP_DIR/smb_ls_$$.txt"
 
     # smbclient ls output format:
     #   "  gba                                 D        0  Sat Mar 28 11:29:16 2026"
-    # Parse with awk compatible with mawk (no POSIX character classes).
-    smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH -c "ls \"$remote_path/*\"" 2>/dev/null \
-    | awk '
+    # Capture to a temp file first to avoid mawk pipe-buffering bugs, then parse.
+    smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH -c "ls \"$remote_path/*\"" 2>/dev/null > "$tmp_ls"
+    awk '
         # Skip blank lines
         /^[ \t]*$/ { next }
         # Skip smbclient status lines
@@ -150,7 +176,9 @@ smb_ls() {
                 }
             }
         }
-    '
+        END { }
+    ' "$tmp_ls"
+    rm -f "$tmp_ls"
 }
 
 # smb_get <remote-dir> <filename> <local-dest-path>
@@ -188,6 +216,8 @@ echo ""
 # 4. Discover matching system folders
 # ---------------------------------------------------------------------------
 echo "--- Discovering systems ---"
+
+mkdir -p "$TEMP_DIR"
 
 # List directories under ROM_PATH on the server
 REMOTE_SYSTEMS=()
@@ -240,14 +270,17 @@ echo ""
 echo "--- Syncing ROMs ---"
 echo ""
 
-mkdir -p "$TEMP_DIR"
-
 for system in "${MATCHING_SYSTEMS[@]}"; do
     echo ">> $system"
     remote_dir="$ROM_PATH/$system"
     local_dir="$LOCAL_ROMS/$system"
     system_new=0
     system_errors=0
+    system_deleted=0
+
+    # REPLACE mode: track remote filenames and extensions to detect local extras after download
+    declare -A remote_files
+    declare -A remote_exts
 
     # List files in this system folder on the server
     while IFS= read -r entry; do
@@ -258,9 +291,20 @@ for system in "${MATCHING_SYSTEMS[@]}"; do
         [ "$type" = "f" ] || continue
         [ -n "$filename" ] || continue
 
+        # Track every remote filename and extension (used by REPLACE cleanup pass below)
+        if [ "$SYNC_MODE" = "REPLACE" ]; then
+            remote_files["$filename"]=1
+            ext="${filename##*.}"
+            # If no dot in filename, ext equals filename — treat as no-extension (use empty string)
+            if [ "$ext" = "$filename" ]; then
+                ext=""
+            fi
+            remote_exts["$ext"]=1
+        fi
+
         local_file="$local_dir/$filename"
 
-        # Skip if already present locally
+        # Skip if already present locally (both ADD and REPLACE modes)
         if [ -f "$local_file" ]; then
             continue
         fi
@@ -269,13 +313,17 @@ for system in "${MATCHING_SYSTEMS[@]}"; do
         tmp_file="$TEMP_DIR/$filename"
 
         if smb_get "$remote_dir" "$filename" "$tmp_file" && [ -s "$tmp_file" ]; then
-            # Move into place
-            if mv "$tmp_file" "$local_file" 2>/dev/null; then
+            # Ensure destination directory exists
+            sudo mkdir -p "$local_dir"
+            # Copy into place (cp+rm works across filesystems; mv may fail)
+            err_msg=$(sudo cp "$tmp_file" "$local_file" 2>&1)
+            if [ $? -eq 0 ]; then
+                rm -f "$tmp_file"
                 echo "    [OK] $filename"
                 system_new=$((system_new + 1))
                 FILES_TRANSFERRED=$((FILES_TRANSFERRED + 1))
             else
-                echo "    [ERROR] Could not move $filename to $local_file"
+                echo "    [ERROR] Could not copy to $local_file: $err_msg"
                 rm -f "$tmp_file" 2>/dev/null
                 system_errors=$((system_errors + 1))
                 ERRORS=$((ERRORS + 1))
@@ -289,10 +337,35 @@ for system in "${MATCHING_SYSTEMS[@]}"; do
 
     done < <(smb_ls "$remote_dir")
 
-    if [ $system_new -eq 0 ] && [ $system_errors -eq 0 ]; then
+    # REPLACE mode: delete local files that are not present on the remote
+    if [ "$SYNC_MODE" = "REPLACE" ] && [ -d "$local_dir" ]; then
+        while IFS= read -r -d '' local_f; do
+            fname="${local_f##*/}"
+            # Only consider deletion for extensions the server actually serves
+            local_ext="${fname##*.}"
+            if [ "$local_ext" = "$fname" ]; then
+                local_ext=""
+            fi
+            # Skip files whose extension is not in the remote extension set
+            if [ -z "${remote_exts["$local_ext"]+x}" ]; then
+                continue
+            fi
+            if [ -z "${remote_files["$fname"]+x}" ]; then
+                echo "  [REPLACE] Deleting local-only file: $fname"
+                sudo rm -f "$local_f"
+                system_deleted=$((system_deleted + 1))
+                FILES_DELETED=$((FILES_DELETED + 1))
+            fi
+        done < <(find "$local_dir" -maxdepth 1 -type f -print0 2>/dev/null)
+    fi
+
+    unset remote_files
+    unset remote_exts
+
+    if [ $system_new -eq 0 ] && [ $system_errors -eq 0 ] && [ $system_deleted -eq 0 ]; then
         echo "  (no new files)"
     else
-        echo "  New files: $system_new  Errors: $system_errors"
+        echo "  Files synced: $system_new  Deleted: $system_deleted  Errors: $system_errors"
     fi
 
     [ $system_errors -eq 0 ] && SYSTEMS_SYNCED=$((SYSTEMS_SYNCED + 1))
@@ -306,19 +379,22 @@ echo "=== Sync complete ==="
 echo ""
 echo "  Systems synced : $SYSTEMS_SYNCED / ${#MATCHING_SYSTEMS[@]}"
 echo "  Files added    : $FILES_TRANSFERRED"
+if [ "$SYNC_MODE" = "REPLACE" ] && [ $FILES_DELETED -gt 0 ]; then
+    echo "  Files deleted : $FILES_DELETED"
+fi
 if [ $ERRORS -gt 0 ]; then
-    echo "  Errors         : $ERRORS (check output above)"
+    echo "  Errors        : $ERRORS (check output above)"
 fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# 7. Restart EmulationStation if new files were added
+# 7. Restart EmulationStation if files were added or removed
 # ---------------------------------------------------------------------------
-if [ $FILES_TRANSFERRED -gt 0 ]; then
+if [ $FILES_TRANSFERRED -gt 0 ] || [ $FILES_DELETED -gt 0 ]; then
     echo "Restarting EmulationStation to refresh game lists..."
     sleep 3
     sudo systemctl restart emulationstation
 else
-    echo "No new files — skipping restart."
+    echo "No changes — skipping restart."
     sleep 5
 fi

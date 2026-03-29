@@ -2,3 +2,7 @@ SERVER_IP=192.168.178.101
 SHARE_NAME=roms
 ROM_PATH=
 SMB_PORT=7867
+# SYNC_MODE: ADD (default) or REPLACE
+# ADD     - Only download new files (skip existing)
+# REPLACE - Download missing files, delete local files not on server
+SYNC_MODE=

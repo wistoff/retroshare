@@ -3,7 +3,14 @@
 # One-time setup: installs dependencies and creates a default config file.
 # Safe to run multiple times (idempotent).
 
-CONFIG_FILE="/roms/tools/romsync.cfg"
+# Auto-detect ROM destination: /roms2/ (GAMES SD card) or /roms/ (single SD)
+if [ -d "/roms2" ] && [ "$(ls -A /roms2 2>/dev/null)" ]; then
+    LOCAL_ROMS="/roms2"
+else
+    LOCAL_ROMS="/roms"
+fi
+
+CONFIG_FILE="$LOCAL_ROMS/tools/romsync.cfg"
 
 echo "=== ROM Sync Setup ==="
 echo ""
@@ -75,9 +82,9 @@ else
     sudo mkdir -p "$(dirname "$CONFIG_FILE")"
     sudo tee "$CONFIG_FILE" > /dev/null <<'EOF'
 SERVER_IP=192.168.178.101
-SHARE_NAME=data
-ROM_PATH=media/roms
-SMB_PORT=445
+SHARE_NAME=roms
+ROM_PATH=
+SMB_PORT=7867
 EOF
     echo "  [OK] Created default config: $CONFIG_FILE"
 fi
@@ -93,9 +100,9 @@ echo "  $CONFIG_FILE"
 echo ""
 echo "Default values:"
 echo "  SERVER_IP  = 192.168.178.101"
-echo "  SHARE_NAME = data"
-echo "  ROM_PATH   = media/roms"
-echo "  SMB_PORT   = 445"
+echo "  SHARE_NAME = roms"
+echo "  ROM_PATH   = (empty)"
+echo "  SMB_PORT   = 7867"
 echo ""
 
 sleep 3
