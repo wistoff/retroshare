@@ -22,6 +22,7 @@ Endpoints:
     GET  /api/games                         → all games grouped by system with metadata
     POST /api/scrape                        → trigger full thumbnail scrape (synchronous)
     GET  /api/thumbnails/<system>/<file>    → serve cached thumbnail image
+    GET  /api/identify?path=<p>             → debug: CRC32 hash + OpenVGDB lookup for a file
 """
 
 import json
@@ -33,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs, quote, unquote
 
 import merger
+import romident
 import scraper
 from watcher import SourceWatcher
 
@@ -164,6 +166,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_status()
         elif path == "/api/games":
             self._api_get_games()
+        elif path == "/api/identify":
+            qs = parse_qs(parsed.query)
+            ident_path = qs.get("path", [None])[0]
+            self._api_identify(ident_path)
         elif path.startswith("/api/thumbnails/"):
             self._api_serve_thumbnail(path[len("/api/thumbnails/"):])
         else:
@@ -360,6 +366,51 @@ class Handler(BaseHTTPRequestHandler):
         ]
         total_games = sum(len(s["games"]) for s in systems_list)
         self._send_json({"systems": systems_list, "total_games": total_games})
+
+    def _api_identify(self, file_path):
+        """Debug endpoint: hash file_path and look it up in OpenVGDB.
+
+        Only allows paths under /sources/ or /merged/.
+        """
+        if not file_path:
+            self._send_json({"error": "path parameter required"}, status=400)
+            return
+
+        real_path = os.path.realpath(file_path)
+        sources_real = os.path.realpath(SOURCES_ROOT)
+        merged_real = os.path.realpath(MERGED_DIR)
+
+        if not (
+            real_path.startswith(sources_real + os.sep)
+            or real_path == sources_real
+            or real_path.startswith(merged_real + os.sep)
+            or real_path == merged_real
+        ):
+            self._send_json({"error": "path must be under /sources/ or /merged/"}, status=403)
+            return
+
+        if not os.path.isfile(real_path):
+            self._send_json({"error": "file not found"}, status=404)
+            return
+
+        db_path = romident.ensure_db(os.path.dirname(CACHE_FILE))
+        if db_path is None:
+            self._send_json({"error": "OpenVGDB unavailable"}, status=503)
+            return
+
+        try:
+            crc = romident.hash_rom(real_path)
+        except OSError as exc:
+            self._send_json({"error": f"hash failed: {exc}"}, status=500)
+            return
+
+        canonical = romident.lookup_crc(db_path, crc)
+        self._send_json({
+            "path": real_path,
+            "crc32": crc,
+            "found": canonical is not None,
+            "canonical": canonical,
+        })
 
     def _api_scrape(self):
         try:
