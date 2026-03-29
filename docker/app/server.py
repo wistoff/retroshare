@@ -12,13 +12,16 @@ watcher-triggered — are serialised through a module-level threading.Lock so
 concurrent rebuilds cannot occur.
 
 Endpoints:
-    GET  /                      → static/index.html
-    GET  /static/*              → files from static/
-    GET  /api/sources           → list configured sources
-    POST /api/sources           → save sources + rebuild
-    GET  /api/browse?path=<p>   → list subdirectories under /sources/
-    POST /api/rebuild           → rebuild symlink tree
-    GET  /api/status            → current status summary
+    GET  /                                  → static/index.html
+    GET  /static/*                          → files from static/
+    GET  /api/sources                       → list configured sources
+    POST /api/sources                       → save sources + rebuild
+    GET  /api/browse?path=<p>              → list subdirectories under /sources/
+    POST /api/rebuild                       → rebuild symlink tree
+    GET  /api/status                        → current status summary
+    GET  /api/games                         → all games grouped by system with metadata
+    POST /api/scrape                        → trigger full thumbnail scrape (synchronous)
+    GET  /api/thumbnails/<system>/<file>    → serve cached thumbnail image
 """
 
 import json
@@ -27,9 +30,10 @@ import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote, unquote
 
 import merger
+import scraper
 from watcher import SourceWatcher
 
 # ---------------------------------------------------------------------------
@@ -40,6 +44,8 @@ PORT = 8080
 CONFIG_FILE = "/config/sources.json"
 MERGED_DIR = "/merged"
 SOURCES_ROOT = "/sources"
+CACHE_FILE = "/config/gamecache.json"
+CACHE_DIR = "/config/thumbnails"
 
 # Directory containing this script — used to locate static/
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -156,6 +162,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_browse(browse_path)
         elif path == "/api/status":
             self._api_status()
+        elif path == "/api/games":
+            self._api_get_games()
+        elif path.startswith("/api/thumbnails/"):
+            self._api_serve_thumbnail(path[len("/api/thumbnails/"):])
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -167,6 +177,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_post_sources()
         elif path == "/api/rebuild":
             self._api_rebuild()
+        elif path == "/api/scrape":
+            self._api_scrape()
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -283,6 +295,130 @@ class Handler(BaseHTTPRequestHandler):
                 "total_files": total_files,
             }
         )
+
+    def _api_get_games(self):
+        cache = scraper.load_cache(CACHE_FILE)
+
+        systems_map = {}  # system_name → list of game dicts
+
+        if os.path.isdir(MERGED_DIR):
+            try:
+                for system_entry in os.scandir(MERGED_DIR):
+                    if not system_entry.is_dir(follow_symlinks=False):
+                        continue
+                    if system_entry.name.startswith("."):
+                        continue
+                    system_name = system_entry.name
+                    games = []
+                    try:
+                        for file_entry in os.scandir(system_entry.path):
+                            if file_entry.name.startswith("."):
+                                continue
+                            if file_entry.is_dir(follow_symlinks=False):
+                                continue
+                            filename = file_entry.name
+                            cache_key = f"{system_name}/{filename}"
+                            entry = cache.get(cache_key)
+                            if entry is not None:
+                                title = entry.get("title") or os.path.splitext(filename)[0]
+                                thumb_rel = entry.get("thumbnail")
+                                if thumb_rel:
+                                    # thumb_rel is e.g. "snes/Super Mario World (USA).png"
+                                    # Build URL with percent-encoded filename component only.
+                                    thumb_filename = os.path.basename(thumb_rel)
+                                    thumbnail_url = (
+                                        f"/api/thumbnails/{quote(system_name, safe='')}"
+                                        f"/{quote(thumb_filename, safe='')}"
+                                    )
+                                else:
+                                    thumbnail_url = None
+                                scraped = True
+                            else:
+                                title = os.path.splitext(filename)[0]
+                                thumbnail_url = None
+                                scraped = False
+                            games.append(
+                                {
+                                    "filename": filename,
+                                    "title": title,
+                                    "thumbnail": thumbnail_url,
+                                    "scraped": scraped,
+                                }
+                            )
+                    except OSError as exc:
+                        logger.warning(
+                            "Cannot list system dir %s: %s", system_entry.path, exc
+                        )
+                    games.sort(key=lambda g: g["title"].lower())
+                    systems_map[system_name] = games
+            except OSError as exc:
+                logger.warning("Cannot scan merged dir %s: %s", MERGED_DIR, exc)
+
+        systems_list = [
+            {"name": name, "games": games}
+            for name, games in sorted(systems_map.items())
+        ]
+        total_games = sum(len(s["games"]) for s in systems_list)
+        self._send_json({"systems": systems_list, "total_games": total_games})
+
+    def _api_scrape(self):
+        try:
+            stats = scraper.scrape_all(MERGED_DIR, CACHE_FILE, CACHE_DIR)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Scrape failed: %s", exc)
+            self._send_json({"error": str(exc)}, status=500)
+            return
+        self._send_json({"status": "ok", **stats})
+
+    def _api_serve_thumbnail(self, raw_path):
+        """Serve a cached thumbnail from CACHE_DIR.
+
+        raw_path is the URL suffix after /api/thumbnails/, e.g.
+        "snes/Super%20Mario%20World%20(USA).png".  Both components are
+        URL-decoded before resolving to a filesystem path.
+        """
+        # URL-decode the full path, then split into at most two components.
+        decoded = unquote(raw_path)
+        parts = decoded.split("/", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            self._send_json({"error": "invalid thumbnail path"}, status=400)
+            return
+
+        system, filename = parts[0], parts[1]
+
+        # Prevent path traversal: normalise each component independently and
+        # reject anything that contains a separator after normalisation.
+        safe_system = os.path.normpath(system)
+        safe_filename = os.path.normpath(filename)
+        if os.sep in safe_system or os.sep in safe_filename:
+            self._send_json({"error": "forbidden"}, status=403)
+            return
+
+        full_path = os.path.join(CACHE_DIR, safe_system, safe_filename)
+        real_full = os.path.realpath(full_path)
+        cache_real = os.path.realpath(CACHE_DIR)
+
+        if not real_full.startswith(cache_real + os.sep):
+            self._send_json({"error": "forbidden"}, status=403)
+            return
+
+        if not os.path.isfile(real_full):
+            self._send_json({"error": "not found"}, status=404)
+            return
+
+        try:
+            with open(real_full, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            logger.error("Cannot read thumbnail %s: %s", real_full, exc)
+            self._send_json({"error": "internal error"}, status=500)
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     # ------------------------------------------------------------------
     # Internal helpers

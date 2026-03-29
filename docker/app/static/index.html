@@ -468,6 +468,182 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ── Tab navigation ───────────────────────────────────────────────── */
+    .tab-nav {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0;
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      padding: 10px 18px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn:hover:not(:disabled) {
+      color: var(--text);
+      background: transparent;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ── Game library ─────────────────────────────────────────────────── */
+    .games-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .games-header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+
+    .games-header-left h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--text-muted);
+    }
+
+    .games-count {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border-radius: 20px;
+      padding: 2px 10px;
+    }
+
+    .system-group {
+      margin-bottom: 36px;
+    }
+
+    .system-heading {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .system-heading .system-game-count {
+      font-weight: 400;
+      color: var(--text-muted);
+      opacity: 0.7;
+    }
+
+    .game-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 14px;
+    }
+
+    @media (max-width: 600px) {
+      .game-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 10px;
+      }
+    }
+
+    .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color 0.15s, transform 0.15s;
+      cursor: default;
+    }
+    .game-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .game-thumb-wrap {
+      position: relative;
+      width: 100%;
+      padding-top: 133%; /* 3:4 portrait aspect ratio */
+      background: var(--surface2);
+      overflow: hidden;
+    }
+
+    .game-thumb-wrap img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .game-thumb-placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      color: var(--border);
+      background: var(--surface2);
+      user-select: none;
+    }
+
+    .game-title {
+      padding: 8px 10px;
+      font-size: 0.78rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.3;
+    }
+
+    .games-empty {
+      text-align: center;
+      padding: 64px 20px;
+      color: var(--text-muted);
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+    }
+
+    .games-empty .empty-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+    }
+
+    .games-empty p {
+      margin-top: 8px;
+      font-size: 0.875rem;
+    }
+
+    .games-loading {
+      text-align: center;
+      padding: 64px 20px;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
   </style>
 </head>
 <body>
@@ -496,23 +672,52 @@
     </div>
   </header>
 
-  <!-- ── Sources ─────────────────────────────────────────────────────── -->
-  <div class="section-header">
-    <h2>ROM Sources</h2>
-    <button class="btn-primary" onclick="openAddModal()">+ Add Source</button>
-  </div>
+  <!-- ── Tab navigation ──────────────────────────────────────────────── -->
+  <nav class="tab-nav" role="tablist">
+    <button class="tab-btn active" id="tab-btn-sources" role="tab" aria-selected="true"
+            onclick="switchTab('sources')">Sources</button>
+    <button class="tab-btn" id="tab-btn-games" role="tab" aria-selected="false"
+            onclick="switchTab('games')">Games</button>
+  </nav>
 
-  <div id="sources-list">
-    <div class="empty-state">
-      <span class="spinner"></span> Loading sources…
+  <!-- ── Sources tab ──────────────────────────────────────────────────── -->
+  <div id="tab-sources">
+
+    <div class="section-header">
+      <h2>ROM Sources</h2>
+      <button class="btn-primary" onclick="openAddModal()">+ Add Source</button>
     </div>
-  </div>
 
-  <!-- ── Rebuild ─────────────────────────────────────────────────────── -->
-  <div class="rebuild-section">
-    <button class="btn-rebuild" id="rebuild-btn" onclick="triggerRebuild()">⟳ Rebuild Now</button>
-    <span class="rebuild-result" id="rebuild-result"></span>
-  </div>
+    <div id="sources-list">
+      <div class="empty-state">
+        <span class="spinner"></span> Loading sources…
+      </div>
+    </div>
+
+    <!-- ── Rebuild ───────────────────────────────────────────────────── -->
+    <div class="rebuild-section">
+      <button class="btn-rebuild" id="rebuild-btn" onclick="triggerRebuild()">⟳ Rebuild Now</button>
+      <span class="rebuild-result" id="rebuild-result"></span>
+    </div>
+
+  </div><!-- /#tab-sources -->
+
+  <!-- ── Games tab ────────────────────────────────────────────────────── -->
+  <div id="tab-games" style="display:none">
+
+    <div class="games-header">
+      <div class="games-header-left">
+        <h2>Game Library</h2>
+        <span class="games-count" id="games-count"></span>
+      </div>
+      <button class="btn-primary" id="scrape-btn" onclick="scrapeGames()">🖼 Scrape Thumbnails</button>
+    </div>
+
+    <div id="games-list">
+      <div class="games-loading"><span class="spinner"></span> Loading games…</div>
+    </div>
+
+  </div><!-- /#tab-games -->
 
 </div><!-- /.app -->
 
@@ -569,6 +774,7 @@
   let editIndex = -1;        // -1 = adding new, >=0 = editing existing
   let browserCurrentPath = '/sources/';
   let toastTimer = null;
+  let gamesData = null;      // cached GET /api/games response
 
   /* ── Init ───────────────────────────────────────────────────────────── */
   async function init() {
@@ -841,6 +1047,106 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  /* ── Tab navigation ─────────────────────────────────────────────────── */
+  function switchTab(tab) {
+    const isGames = tab === 'games';
+    document.getElementById('tab-sources').style.display = isGames ? 'none' : '';
+    document.getElementById('tab-games').style.display   = isGames ? '' : 'none';
+
+    document.getElementById('tab-btn-sources').classList.toggle('active', !isGames);
+    document.getElementById('tab-btn-sources').setAttribute('aria-selected', String(!isGames));
+    document.getElementById('tab-btn-games').classList.toggle('active', isGames);
+    document.getElementById('tab-btn-games').setAttribute('aria-selected', String(isGames));
+
+    if (isGames) loadGames();
+  }
+
+  /* ── Games ───────────────────────────────────────────────────────────── */
+  async function loadGames() {
+    document.getElementById('games-list').innerHTML =
+      '<div class="games-loading"><span class="spinner"></span> Loading games…</div>';
+    document.getElementById('games-count').textContent = '';
+
+    try {
+      gamesData = await apiFetch('/api/games');
+      renderGames();
+    } catch (e) {
+      document.getElementById('games-list').innerHTML =
+        `<div class="games-empty" style="color:var(--danger)">Failed to load games: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderGames() {
+    if (!gamesData) return;
+
+    const countEl = document.getElementById('games-count');
+    const listEl  = document.getElementById('games-list');
+    const total   = gamesData.total_games || 0;
+    countEl.textContent = `${total.toLocaleString()} game${total !== 1 ? 's' : ''}`;
+
+    const systems = (gamesData.systems || []).filter(s => s.games && s.games.length > 0);
+
+    if (systems.length === 0) {
+      listEl.innerHTML = `
+        <div class="games-empty">
+          <div class="empty-icon">🎮</div>
+          <strong>No games found</strong>
+          <p>Add a ROM source and rebuild to populate the library.</p>
+        </div>`;
+      return;
+    }
+
+    listEl.innerHTML = systems.map(sys => `
+      <div class="system-group">
+        <div class="system-heading">
+          ${escHtml(sys.name)}
+          <span class="system-game-count">(${sys.games.length})</span>
+        </div>
+        <div class="game-grid">
+          ${sys.games.map(game => renderGameCard(sys.name, game)).join('')}
+        </div>
+      </div>`).join('');
+  }
+
+  function renderGameCard(systemName, game) {
+    const thumbHtml = game.thumbnail
+      ? `<img src="${escHtml(game.thumbnail)}" alt="${escHtml(game.title || game.filename)}" loading="lazy" />`
+      : `<div class="game-thumb-placeholder" aria-hidden="true">🎮</div>`;
+
+    return `
+      <div class="game-card" title="${escHtml(game.title || game.filename)}">
+        <div class="game-thumb-wrap">${thumbHtml}</div>
+        <div class="game-title">${escHtml(game.title || game.filename)}</div>
+      </div>`;
+  }
+
+  /* ── Scrape thumbnails ───────────────────────────────────────────────── */
+  async function scrapeGames() {
+    const btn = document.getElementById('scrape-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scraping…';
+
+    try {
+      const result = await apiFetch('/api/scrape', { method: 'POST' });
+      const scraped  = result.scraped  || 0;
+      const failed   = result.failed   || 0;
+      const skipped  = result.skipped  || 0;
+      const parts = [];
+      if (scraped > 0)  parts.push(`${scraped} new thumbnail${scraped !== 1 ? 's' : ''}`);
+      if (skipped > 0)  parts.push(`${skipped} already cached`);
+      if (failed > 0)   parts.push(`${failed} failed`);
+      const msg = parts.length ? `Scraped: ${parts.join(', ')}` : 'Scrape complete.';
+      showToast(msg, failed > 0 ? '' : 'success');
+      // Reload games to show newly fetched thumbnails
+      await loadGames();
+    } catch (e) {
+      showToast(`Scrape failed: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🖼 Scrape Thumbnails';
+    }
   }
 
   /* ── Keyboard shortcuts ─────────────────────────────────────────────── */
