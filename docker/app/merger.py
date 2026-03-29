@@ -7,11 +7,44 @@ source's file is used and subsequent ones are skipped.
 """
 
 import os
+import re
 import logging
 
 import romident
 
 logger = logging.getLogger(__name__)
+
+_REGION_CODES = {"USA", "Japan", "Europe", "World", "France", "Germany", "Spain", "Italy", "UK", "Australia", "Brazil", "Canada", "China", "Korea", "Russia", "Netherlands", "Sweden", "Denmark", "Norway", "Finland", "Belgium", "Switzerland", "Austria"}
+
+
+def _clean_name(name):
+    """Clean up a ROM name from OpenVGDB/No-Intro naming conventions.
+
+    - Strips verbose language tags like (En,Fr,De,Es,It)
+    - Strips publisher and date tags
+    - Keeps standard region codes like (USA), (Europe), (Japan)
+    - Capitalizes "The" properly (No-Intro convention)
+    """
+    segments = re.split(r"(\s*\([^)]+\))", name)
+    kept = []
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        m = re.match(r"^\(([^)]+)\)$", seg)
+        if m:
+            inner = m.group(1)
+            if inner not in _REGION_CODES:
+                continue
+            if kept and not kept[-1].endswith(" "):
+                kept.append(" ")
+            kept.append(m.group(0))
+        else:
+            kept.append(seg)
+
+    result = "".join(kept)
+    result = re.sub(r"(?<!\w)[Tt]he(?!\w)", "The", result)
+    return result if result else name
 
 
 def _maybe_rename_file(src_file, dest_name, local_source_path):
@@ -163,17 +196,19 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
 
                 # Attempt ROM identification to get a canonical symlink name.
                 dest_name = filename
-                is_zip = filename.lower().endswith(".zip")
                 if db_path is not None:
                     canonical = romident.identify_rom(db_path, src_file)
-                    if canonical is not None and canonical != filename:
-                        # For .zip files, append .zip so the symlink is named
-                        # e.g. "Super Mario World (USA).zip" instead of
-                        # "Super Mario World (USA)" (no extension).
-                        if is_zip:
-                            canonical = canonical + ".zip"
-                        logger.debug("Identified: %s -> %s", filename, canonical)
-                        dest_name = canonical
+                    if canonical is not None:
+                        canonical = _clean_name(canonical)
+                        src_base, src_ext = os.path.splitext(filename)
+                        canon_base, canon_ext = os.path.splitext(canonical)
+                        if canon_base != src_base:
+                            if canon_ext:
+                                dest_name = canonical
+                            elif src_ext:
+                                dest_name = canonical + src_ext
+                        if dest_name != filename:
+                            logger.debug("Identified: %s -> %s", filename, dest_name)
 
                 # Rename the source file on disk if it is in the local source.
                 actual_src = _maybe_rename_file(src_file, dest_name, local_source_path)

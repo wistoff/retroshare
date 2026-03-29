@@ -4,6 +4,7 @@ misc/
 opencode.json
 __pycache__/
 *.pyc
+*.sqlite
 romsync.cfg
 ARCHITECTURE.md
 
