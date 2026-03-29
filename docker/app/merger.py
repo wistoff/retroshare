@@ -203,10 +203,7 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                         src_base, src_ext = os.path.splitext(filename)
                         canon_base, canon_ext = os.path.splitext(canonical)
                         if canon_base != src_base:
-                            if canon_ext:
-                                dest_name = canonical
-                            elif src_ext:
-                                dest_name = canonical + src_ext
+                            dest_name = canon_base + (src_ext if src_ext else canon_ext)
                         if dest_name != filename:
                             logger.debug("Identified: %s -> %s", filename, dest_name)
 

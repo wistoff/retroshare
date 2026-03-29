@@ -314,6 +314,14 @@ class Handler(BaseHTTPRequestHandler):
     def _api_get_games(self):
         cache = scraper.load_cache(CACHE_FILE)
 
+        # Load sources once and sort longest path first so the most-specific
+        # prefix wins when source paths overlap (e.g. /sources/foo/roms/extra
+        # before /sources/foo/roms).
+        sources = _load_sources()
+        sources_by_path_len = sorted(
+            sources, key=lambda s: len(s.get("path", "")), reverse=True
+        )
+
         systems_map = {}  # system_name → list of game dicts
 
         if os.path.isdir(MERGED_DIR):
@@ -355,12 +363,26 @@ class Handler(BaseHTTPRequestHandler):
                             try:
                                 target = os.readlink(file_entry.path)
                                 if target:
-                                    parts = target.split(os.sep)
-                                    for i, p in enumerate(parts):
-                                        if p in ("sources", "roms", "media"):
-                                            if i + 1 < len(parts):
-                                                share_name = parts[i + 1]
-                                                break
+                                    # Match symlink target against known source
+                                    # paths (longest first) to get the
+                                    # human-readable source name.
+                                    for src in sources_by_path_len:
+                                        src_path = src.get("path", "")
+                                        if src_path and (
+                                            target == src_path
+                                            or target.startswith(src_path + "/")
+                                        ):
+                                            share_name = src.get("name")
+                                            break
+                                    # Fallback: extract the segment after
+                                    # "sources" / "roms" / "media" in the path.
+                                    if share_name is None:
+                                        parts = target.split(os.sep)
+                                        for i, p in enumerate(parts):
+                                            if p in ("sources", "roms", "media"):
+                                                if i + 1 < len(parts):
+                                                    share_name = parts[i + 1]
+                                                    break
                             except OSError:
                                 pass
 

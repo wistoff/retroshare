@@ -73,7 +73,7 @@ The merged share is available at `smb://<unraid-ip>:7867/roms`.
 
 From the EmulationStation **Tools** menu, run **Sync ROMs**.
 
-The script connects to the server, discovers matching system folders, and downloads any new ROMs. EmulationStation restarts automatically when new files are added.
+The script connects to the server, discovers matching system folders, and syncs ROMs according to the configured mode. **ADD mode** (default) downloads only new files. **REPLACE mode** also deletes local ROM files not present on the server. EmulationStation restarts automatically when files are added or removed.
 
 ### Configuration
 
@@ -83,6 +83,7 @@ The script connects to the server, discovers matching system folders, and downlo
 | `SHARE_NAME` | Samba share name |
 | `ROM_PATH` | Subfolder within the share where system folders live (leave empty if at root) |
 | `SMB_PORT` | SMB port (default 445, use 7867 for the Docker app) |
+| `SYNC_MODE` | `ADD` (default) — only download new files; `REPLACE` — also delete local ROMs not on server |
 
 ## How it works
 
@@ -119,8 +120,9 @@ The script connects to the server, discovers matching system folders, and downlo
 
 ## Good to know
 
-- **No files are ever deleted from the console.** The script only adds new files.
+- **ADD mode (default) never deletes files.** REPLACE mode only deletes ROM files (matched by extension) — saves, gamelists, and media are preserved.
 - **Only matching systems are synced.** If a system folder exists on the server but not on the console (or vice versa), it is skipped.
 - **Safe to run repeatedly.** Re-running the sync is a no-op if nothing changed.
 - **Dual SD card support.** The sync script auto-detects whether ROMs live at `/roms/` or `/roms2/`.
+- **Config file is auto-detected:** `/roms2/tools/romsync.cfg` on dual-SD setups, `/roms/tools/romsync.cfg` on single-SD.
 - **No kernel CIFS dependency.** Uses `smbclient` (userspace) instead of `mount -t cifs`.
