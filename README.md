@@ -44,7 +44,7 @@ Sync ROMs from multiple sources to an R36S handheld running ArkOS over Wi-Fi, an
 Two Samba shares are exposed on the same port:
 
 - `smb://<unraid-ip>:7867/roms` — read-only merged ROM tree (served from `/merged/`)
-- `smb://<unraid-ip>:7867/saves` — writable save share, backed by `/sources/local/.saves/`. R36S devices push save files here.
+- `smb://<unraid-ip>:7867/saves` — writable share backed by `/sources/local/`. R36S devices push save files here; they land next to their ROM at `<system>/<stem>.srm` (and `.sav` / `.state` variants). The merger skips save extensions so saves never appear as fake games in the `roms` share.
 
 On collision between sources, the local source **always wins** — a local copy of a game takes precedence over any friend's copy of the same file. This is what makes ROM promotion work: copying a file into `/sources/local/` and triggering a rebuild automatically repoints the merged symlink at the local copy.
 
@@ -157,7 +157,7 @@ Local and remote save files are **never deleted**. A promote failure aborts the 
 ## Good to know
 
 - **Saves are never lost.** A save is only considered synced after the server has promoted its ROM into your local share *and* the atomic rename on the save upload completes. On any failure the local save stays untouched and is retried next run.
-- **Friends never see your saves.** The `[saves]` share is backed by a directory inside your own local source. It has no path into friends' read-only mounts.
+- **Friends never see your saves.** The `[saves]` share is backed by your own local source mount. Friends' shares are separate read-only bind mounts — there's no path into them from the saves share.
 - **Friends never see promoted ROMs either.** Promotion copies a file into your local source — friends' shares are never written to.
 - **ADD mode (default) never deletes files.** REPLACE mode only deletes ROM files (matched by extension) — saves, gamelists, and media are preserved.
 - **Only matching systems are synced.** If a system folder exists on the server but not on the console (or vice versa), it is skipped.

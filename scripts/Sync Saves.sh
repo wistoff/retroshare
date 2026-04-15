@@ -155,6 +155,14 @@ promote_did_copy() {
 # ---------------------------------------------------------------------------
 # 6. Upload save atomically: put <local> to <name>.tmp, then rename.
 #    upload_save <system> <local-file> <remote-name>
+#
+# smbclient is noisy: it prints "Unable to initialize messaging context" in
+# container environments (harmless) and returns rc=1 if any command in a -c
+# script fails, including a no-op mkdir. We therefore:
+#   1. Run mkdir separately and discard its result.
+#   2. Run put + rename in a second call with semicolon-separated commands.
+#   3. Verify success by listing the final file — if it's there, we're done,
+#      regardless of what smbclient's exit code said.
 # ---------------------------------------------------------------------------
 upload_save() {
     local system="$1"
@@ -163,30 +171,28 @@ upload_save() {
     local share="//$SERVER_IP/$SAVES_SHARE"
     local tmp_name="${remote_name}.tmp"
 
-    # smbclient ignores individual command failures; mkdir will fail silently
-    # if the system subdir already exists. cd must succeed for put/rename.
+    # 1. Ensure the system subdirectory exists. Failure means it already
+    #    exists — harmless — or a real problem that will surface in step 2.
+    smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
+        -c "mkdir \"$system\"" >/dev/null 2>&1
+
+    # 2. Put to a temp name then rename atomically. Semicolon-separated.
     local out
-    out=$(smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH -c "
-        prompt OFF
-        mkdir \"$system\"
-        cd \"$system\"
-        put \"$local_file\" \"$tmp_name\"
-        rename \"$tmp_name\" \"$remote_name\"
-    " 2>&1)
-    local rc=$?
-    if [ $rc -ne 0 ]; then
-        echo "    [ERROR] smbclient rc=$rc: $out"
-        return 1
+    out=$(smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
+        -c "cd \"$system\"; put \"$local_file\" \"$tmp_name\"; rename \"$tmp_name\" \"$remote_name\"" 2>&1)
+
+    # 3. Verify by listing the final file on the server. Authoritative check.
+    local ls_out
+    ls_out=$(smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
+        -c "ls \"$system/$remote_name\"" 2>&1)
+    if echo "$ls_out" | grep -qF "$remote_name"; then
+        return 0
     fi
-    # smbclient returns 0 even if individual commands failed — scan output.
-    if echo "$out" | grep -qiE "NT_STATUS|cannot|error"; then
-        # "NT_STATUS_OBJECT_NAME_COLLISION" on mkdir is harmless.
-        if echo "$out" | grep -qvE "NT_STATUS_OBJECT_NAME_COLLISION"; then
-            echo "    [ERROR] smbclient: $out"
-            return 1
-        fi
-    fi
-    return 0
+
+    # Upload failed. Surface whichever output is more informative.
+    echo "    [ERROR] upload failed"
+    echo "$out" | grep -viE "^$|Unable to initialize messaging context" | sed 's/^/      /'
+    return 1
 }
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,25 @@ logger = logging.getLogger(__name__)
 
 _REGION_CODES = {"USA", "Japan", "Europe", "World", "France", "Germany", "Spain", "Italy", "UK", "Australia", "Brazil", "Canada", "China", "Korea", "Russia", "Netherlands", "Sweden", "Denmark", "Norway", "Finland", "Belgium", "Switzerland", "Austria"}
 
+# File extensions that should never appear in the merged ROM tree. Save data
+# pushed from R36S devices lands in /sources/local/<system>/<stem>.srm (and
+# .sav / .state variants) next to its ROM — convenient for the user, but we
+# must not symlink these files into /merged/ or they would show up on the
+# roms SMB share as fake games.
+_SAVE_EXTENSIONS = (".srm", ".sav", ".state")
+
+
+def _is_save_file(filename):
+    """True if filename is a save file (.srm / .sav / .state / .stateN / .state.auto)."""
+    for ext in _SAVE_EXTENSIONS:
+        idx = filename.rfind(ext)
+        if idx <= 0:
+            continue
+        tail = filename[idx + len(ext):]
+        if tail == "" or tail.isdigit() or tail == ".auto":
+            return True
+    return False
+
 
 def _clean_name(name):
     """Clean up a ROM name from OpenVGDB/No-Intro naming conventions.
@@ -224,6 +243,8 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
             for filename in file_entries:
                 if filename.startswith("."):
                     continue  # skip hidden files
+                if _is_save_file(filename):
+                    continue  # save data lives next to the ROM but is not a ROM
 
                 src_file = os.path.join(system_path, filename)
 

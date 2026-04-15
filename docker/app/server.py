@@ -49,12 +49,11 @@ OWNERSHIP_FILE = "/config/ownership.json"
 MERGED_DIR = "/merged"
 SOURCES_ROOT = "/sources"
 SOURCES_LOCAL = "/sources/local"
-SAVES_DIR = "/sources/local/.saves"
 CACHE_FILE = "/config/gamecache.json"
 CACHE_DIR = "/config/thumbnails"
 
 # File extensions considered save data. A ".state" with a trailing digit or
-# ".auto" suffix is matched by the startswith check in _scan_saves_index.
+# ".auto" suffix is matched by the tail check in _scan_saves_index.
 _SAVE_EXTENSIONS = (".srm", ".sav", ".state")
 
 # Directory containing this script — used to locate static/
@@ -125,22 +124,22 @@ def _save_sources(sources):
 
 
 def _scan_saves_index():
-    """Build {system: {stem: latest_mtime_epoch}} from SAVES_DIR.
+    """Build {system: {stem: latest_mtime_epoch}} by walking SOURCES_LOCAL.
 
-    A save file is anything under /sources/local/.saves/<system>/ whose
-    extension is .srm / .sav / .state / .state.auto / .state1 … Each game
-    may have multiple save files (battery + save states); we keep only the
+    Save files live next to their ROM inside each system folder of the
+    local source (/sources/local/<system>/<stem>.srm etc). Extensions
+    matched: .srm / .sav / .state / .state.auto / .stateN. Each game may
+    have multiple save files (battery + save states); we keep only the
     newest mtime so the UI can show a single "last played" timestamp.
 
-    Stems match whatever was on the R36S before upload — i.e. the canonical
-    filename minus the save extension — so the lookup in _api_get_games can
-    use os.path.splitext(rom_filename)[0] as the key.
+    Stems are filenames with the save extension stripped, so the lookup
+    in _api_get_games uses os.path.splitext(rom_filename)[0] as the key.
     """
     index = {}
-    if not os.path.isdir(SAVES_DIR):
+    if not os.path.isdir(SOURCES_LOCAL):
         return index
     try:
-        for system_entry in os.scandir(SAVES_DIR):
+        for system_entry in os.scandir(SOURCES_LOCAL):
             if not system_entry.is_dir(follow_symlinks=False):
                 continue
             if system_entry.name.startswith("."):
