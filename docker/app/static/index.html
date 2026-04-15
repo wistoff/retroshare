@@ -582,6 +582,10 @@
       transform: translateY(-2px);
     }
 
+    .game-card.no-save {
+      opacity: 0.5;
+    }
+
     .game-card-wrap {
       position: relative;
     }
@@ -1226,7 +1230,7 @@
 
     return `
       <div class="game-card-wrap">
-        <div class="game-card" title="${escHtml(game.title || game.filename)}">
+        <div class="game-card${game.last_saved ? '' : ' no-save'}" title="${escHtml(game.title || game.filename)}">
           <div class="game-thumb-wrap ${aspectClass}">${thumbHtml}</div>
           <div class="game-title">${escHtml(game.title || game.filename)}</div>
         </div>
