@@ -28,6 +28,13 @@ def _clean_name(name):
     - Strips publisher and date tags
     - Keeps standard region codes like (USA), (Europe), (Japan)
     - Capitalizes "The" properly (No-Intro convention)
+    - Replaces SMB/Windows-reserved characters (: < > " | ? *) with safe
+      equivalents. OpenVGDB's releaseTitleName keeps the original title
+      punctuation (e.g. "Summon Night: Swordcraft Story"), but Samba
+      refuses to serve filenames containing reserved characters, so the
+      R36S sync fails with "Download failed" when the canonical name is
+      used verbatim. No-Intro's own filename convention already replaces
+      ": " with " - ", which matches most existing source filenames.
     """
     segments = re.split(r"(\s*\([^)]+\))", name)
     kept = []
@@ -48,7 +55,20 @@ def _clean_name(name):
 
     result = "".join(kept)
     result = re.sub(r"(?<!\w)[Tt]he(?!\w)", "The", result)
+    result = _sanitize_reserved(result)
     return result if result else name
+
+
+def _sanitize_reserved(name):
+    """Replace SMB/Windows-reserved filename characters with safe forms."""
+    # Colon: No-Intro convention is ": " → " - ", bare ":" → " - ".
+    name = re.sub(r":\s*", " - ", name)
+    # Other reserved chars: drop or replace. These are rare in game titles.
+    name = name.replace('"', "'")
+    name = re.sub(r"[<>|?*]", "", name)
+    # Collapse any double spaces introduced by the above.
+    name = re.sub(r" {2,}", " ", name)
+    return name.strip()
 
 
 def _maybe_rename_file(src_file, dest_name, local_source_path):
