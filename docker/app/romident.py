@@ -315,9 +315,13 @@ def hash_rom(filepath):
     - all others:  no skip
 
     Zip support:
-    - If the file extension is .zip, the first entry in the archive is
-      extracted and hashed.  Header skipping uses the inner file's extension.
-      Returns None (with a warning) if the zip is corrupt or unreadable.
+    - If the file extension is .zip, the largest non-junk entry in the
+      archive is extracted and hashed. Junk = bundled readmes/ads that ROM
+      sites sometimes pack alongside the actual ROM (e.g. Vimm's Lair ships
+      a "Vimm's Lair.txt" advertisement inside every zip; hashing that file
+      produces a CRC that never matches OpenVGDB). Header skipping uses the
+      inner file's extension. Returns None (with a warning) if the zip is
+      corrupt or unreadable.
 
     Args:
         filepath: Path to the ROM file (or .zip containing a ROM).
@@ -336,12 +340,21 @@ def hash_rom(filepath):
         # --- Zip handling ---
         try:
             with zipfile.ZipFile(filepath, "r") as zf:
-                names = zf.namelist()
-                if not names:
+                infos = [i for i in zf.infolist() if not i.is_dir()]
+                if not infos:
                     logger.warning("Empty zip archive: %s", filepath)
                     return None
-                inner_name = names[0]
-                inner_info = zf.getinfo(inner_name)
+                # Prefer the largest non-junk entry. ROMs dwarf any bundled
+                # readme or ad, so size is a reliable discriminator.
+                junk_exts = {".txt", ".nfo", ".diz", ".url", ".htm", ".html", ".md"}
+                candidates = [
+                    i for i in infos
+                    if os.path.splitext(i.filename)[1].lower() not in junk_exts
+                ]
+                if not candidates:
+                    candidates = infos
+                inner_info = max(candidates, key=lambda i: i.file_size)
+                inner_name = inner_info.filename
                 _, inner_ext = os.path.splitext(inner_name)
                 inner_ext = inner_ext.lower()
 
