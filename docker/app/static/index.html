@@ -1209,15 +1209,20 @@
     return aspect ? `aspect-${aspect}` : '';
   }
 
+  function formatLastSaved(epoch) {
+    if (!epoch) return 'Not played';
+    const d = new Date(epoch * 1000);
+    if (isNaN(d.getTime())) return 'Not played';
+    return `Saved ${d.toLocaleDateString()}`;
+  }
+
   function renderGameCard(systemName, game) {
     const aspectClass = getAspectClass(systemName);
     const thumbHtml = game.thumbnail
       ? `<img src="${escHtml(game.thumbnail)}" alt="${escHtml(game.title || game.filename)}" loading="lazy" onload="this.classList.add('loaded')" />`
       : `<div class="game-thumb-placeholder" aria-hidden="true">🎮</div>`;
 
-    const tooltipHtml = game.share
-      ? `<div class="game-tooltip">Source: <strong>${escHtml(game.share)}</strong></div>`
-      : '';
+    const tooltipHtml = `<div class="game-tooltip">${escHtml(formatLastSaved(game.last_saved))}</div>`;
 
     return `
       <div class="game-card-wrap">

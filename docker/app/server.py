@@ -49,8 +49,13 @@ OWNERSHIP_FILE = "/config/ownership.json"
 MERGED_DIR = "/merged"
 SOURCES_ROOT = "/sources"
 SOURCES_LOCAL = "/sources/local"
+SAVES_DIR = "/sources/local/.saves"
 CACHE_FILE = "/config/gamecache.json"
 CACHE_DIR = "/config/thumbnails"
+
+# File extensions considered save data. A ".state" with a trailing digit or
+# ".auto" suffix is matched by the startswith check in _scan_saves_index.
+_SAVE_EXTENSIONS = (".srm", ".sav", ".state")
 
 # Directory containing this script — used to locate static/
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -117,6 +122,66 @@ def _save_sources(sources):
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, "w") as fh:
         json.dump(sources, fh, indent=2)
+
+
+def _scan_saves_index():
+    """Build {system: {stem: latest_mtime_epoch}} from SAVES_DIR.
+
+    A save file is anything under /sources/local/.saves/<system>/ whose
+    extension is .srm / .sav / .state / .state.auto / .state1 … Each game
+    may have multiple save files (battery + save states); we keep only the
+    newest mtime so the UI can show a single "last played" timestamp.
+
+    Stems match whatever was on the R36S before upload — i.e. the canonical
+    filename minus the save extension — so the lookup in _api_get_games can
+    use os.path.splitext(rom_filename)[0] as the key.
+    """
+    index = {}
+    if not os.path.isdir(SAVES_DIR):
+        return index
+    try:
+        for system_entry in os.scandir(SAVES_DIR):
+            if not system_entry.is_dir(follow_symlinks=False):
+                continue
+            if system_entry.name.startswith("."):
+                continue
+            system = system_entry.name
+            system_map = {}
+            try:
+                for f in os.scandir(system_entry.path):
+                    if not f.is_file(follow_symlinks=False):
+                        continue
+                    name = f.name
+                    # Strip any recognised save extension (including .stateN
+                    # and .state.auto variants).
+                    stem = None
+                    for ext in _SAVE_EXTENSIONS:
+                        idx = name.rfind(ext)
+                        if idx <= 0:
+                            continue
+                        # Only accept if ext is at the end or followed by a
+                        # numeric/auto suffix — avoids matching "statement" etc.
+                        tail = name[idx + len(ext):]
+                        if tail == "" or tail.isdigit() or tail == ".auto":
+                            stem = name[:idx]
+                            break
+                    if not stem:
+                        continue
+                    try:
+                        mtime = f.stat().st_mtime
+                    except OSError:
+                        continue
+                    prev = system_map.get(stem)
+                    if prev is None or mtime > prev:
+                        system_map[stem] = mtime
+            except OSError as exc:
+                logger.warning("Cannot scan saves dir %s: %s", system_entry.path, exc)
+                continue
+            if system_map:
+                index[system] = system_map
+    except OSError as exc:
+        logger.warning("Cannot scan %s: %s", SAVES_DIR, exc)
+    return index
 
 
 def _merged_stats():
@@ -326,6 +391,8 @@ class Handler(BaseHTTPRequestHandler):
             sources, key=lambda s: len(s.get("path", "")), reverse=True
         )
 
+        saves_index = _scan_saves_index()
+
         systems_map = {}  # system_name → list of game dicts
 
         if os.path.isdir(MERGED_DIR):
@@ -390,6 +457,11 @@ class Handler(BaseHTTPRequestHandler):
                             except OSError:
                                 pass
 
+                            rom_stem = os.path.splitext(filename)[0]
+                            last_saved = (
+                                saves_index.get(system_name, {}).get(rom_stem)
+                            )
+
                             games.append(
                                 {
                                     "filename": filename,
@@ -397,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "thumbnail": thumbnail_url,
                                     "scraped": scraped,
                                     "share": share_name,
+                                    "last_saved": last_saved,
                                 }
                             )
                     except OSError as exc:
