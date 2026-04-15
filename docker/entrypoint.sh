@@ -6,6 +6,11 @@ if [ ! -f /config/sources.json ]; then
     echo "[]" > /config/sources.json
 fi
 
+# Ensure the writable saves directory exists inside the local source.
+# Samba's [saves] share points here; R36S devices push save data via SMB.
+mkdir -p /sources/local/.saves
+chmod 0775 /sources/local/.saves 2>/dev/null || true
+
 # Trap to kill all background processes on exit
 cleanup() {
     kill 0

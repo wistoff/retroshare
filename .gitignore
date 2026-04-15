@@ -1,5 +1,8 @@
 .DS_Store
 .opencode/
+.claude
+.pytest_cache
+.venv
 misc/
 opencode.json
 __pycache__/
@@ -7,5 +10,7 @@ __pycache__/
 *.sqlite
 romsync.cfg
 ARCHITECTURE.md
+AGENTSS.md
 
 test-roms
+

@@ -21,6 +21,7 @@ Endpoints:
     GET  /api/status                        → current status summary
     GET  /api/games                         → all games grouped by system with metadata
     POST /api/scrape                        → trigger full thumbnail scrape (synchronous)
+    POST /api/promote                       → copy a remote-source ROM into /sources/local/ then rebuild
     GET  /api/thumbnails/<system>/<file>    → serve cached thumbnail image
     GET  /api/identify?path=<p>             → debug: CRC32/MD5/SHA1 hashes + OpenVGDB lookup for a file
 """
@@ -44,6 +45,7 @@ from watcher import SourceWatcher
 
 PORT = 8080
 CONFIG_FILE = "/config/sources.json"
+OWNERSHIP_FILE = "/config/ownership.json"
 MERGED_DIR = "/merged"
 SOURCES_ROOT = "/sources"
 SOURCES_LOCAL = "/sources/local"
@@ -194,6 +196,8 @@ class Handler(BaseHTTPRequestHandler):
             self._api_rebuild()
         elif path == "/api/scrape":
             self._api_scrape()
+        elif path == "/api/promote":
+            self._api_promote()
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -470,6 +474,106 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": str(exc)}, status=500)
             return
         self._send_json({"status": "ok", **stats})
+
+    def _api_promote(self):
+        """Copy a ROM from a remote source into /sources/local/, then rebuild.
+
+        Body: {"system": "<system>", "rom": "<canonical filename>"}
+
+        Uses /config/ownership.json (written by merger.rebuild) to resolve the
+        current source file backing the merged entry. If the ROM already lives
+        in the local source, this is a no-op. On success the caller can safely
+        upload a save file for this ROM to the [saves] share knowing the ROM
+        is now durably in the user's own share.
+
+        Copy is atomic-on-rename: data → <dest>.tmp → fsync → rename → fsync dir.
+        """
+        body = self._read_json_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._send_json({"error": "body must be a JSON object"}, status=400)
+            return
+
+        system = body.get("system")
+        rom = body.get("rom")
+        if not system or not rom:
+            self._send_json({"error": "system and rom required"}, status=400)
+            return
+        # Reject path separators in either component — keys are flat names.
+        if "/" in system or "/" in rom or system.startswith(".") or rom.startswith("."):
+            self._send_json({"error": "invalid system or rom"}, status=400)
+            return
+
+        try:
+            with open(OWNERSHIP_FILE, "r") as fh:
+                ownership = json.load(fh)
+        except FileNotFoundError:
+            self._send_json({"error": "ownership manifest missing — trigger a rebuild first"}, status=503)
+            return
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error("Failed to read ownership manifest: %s", exc)
+            self._send_json({"error": "failed to read ownership manifest"}, status=500)
+            return
+
+        entries = ownership.get("entries", {}) if isinstance(ownership, dict) else {}
+        key = f"{system}/{rom}"
+        src_file = entries.get(key)
+        if not src_file:
+            self._send_json({"error": f"no ownership entry for {key}"}, status=404)
+            return
+
+        # If the source file already lives under /sources/local, nothing to do.
+        # (A save upload can land immediately.)
+        real_src = os.path.realpath(src_file)
+        local_real = os.path.realpath(SOURCES_LOCAL)
+        if real_src.startswith(local_real + os.sep) or real_src == local_real:
+            self._send_json({"status": "ok", "promoted": False, "reason": "already local"})
+            return
+
+        if not os.path.isfile(real_src):
+            logger.warning("Promote: source file missing on disk: %s", real_src)
+            self._send_json({"error": "source file missing on disk"}, status=404)
+            return
+
+        dest_dir = os.path.join(SOURCES_LOCAL, system)
+        dest_file = os.path.join(dest_dir, rom)
+        tmp_file = dest_file + ".tmp"
+
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            with open(real_src, "rb") as s, open(tmp_file, "wb") as d:
+                while True:
+                    chunk = s.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    d.write(chunk)
+                d.flush()
+                os.fsync(d.fileno())
+            os.rename(tmp_file, dest_file)
+            dir_fd = os.open(dest_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError as exc:
+            logger.error("Promote failed for %s: %s", key, exc)
+            try:
+                if os.path.exists(tmp_file):
+                    os.unlink(tmp_file)
+            except OSError:
+                pass
+            self._send_json({"error": f"copy failed: {exc}"}, status=500)
+            return
+
+        logger.info("Promoted %s → %s", real_src, dest_file)
+
+        # Rebuild so the merged symlink repoints at the new local copy.
+        # local-wins ordering in merger.rebuild guarantees it takes precedence.
+        sources = _load_sources()
+        self._do_rebuild(sources)
+
+        self._send_json({"status": "ok", "promoted": True, "dest": dest_file})
 
     def _api_serve_thumbnail(self, raw_path):
         """Serve a cached thumbnail from CACHE_DIR.

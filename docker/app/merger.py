@@ -3,9 +3,13 @@ merger.py — Symlink tree builder for retroshare.
 
 Merges ROM sources into a single flat symlink tree under merged_dir.
 First-source-wins: if two sources have the same system/filename, the first
-source's file is used and subsequent ones are skipped.
+source's file is used and subsequent ones are skipped. The local source
+(local_source_path) is always promoted to the front of the source list so a
+local copy of a game always wins over a remote one — this lets "promote to
+local" work by simply copying a file into /sources/local/ and rebuilding.
 """
 
+import json
 import os
 import re
 import logging
@@ -140,10 +144,23 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
         if db_path is None:
             logger.warning("OpenVGDB unavailable — ROM identification disabled for this rebuild")
 
+    # Local source always wins on collision: move it to the front of the list
+    # so first-source-wins naturally picks it. This is the mechanism behind
+    # "promote to local" — once a file is copied into /sources/local/ and a
+    # rebuild runs, the merged symlink automatically repoints at the local copy.
+    if local_source_path:
+        sources = sorted(
+            sources,
+            key=lambda s: 0 if s.get("path") == local_source_path else 1,
+        )
+
     # Track which destination paths already exist (first-source-wins)
     seen = set()
     systems_with_files = set()
     total_files = 0
+    # canonical_key ("<system>/<dest_name>") -> absolute source file path.
+    # Consumed by server.py to implement /api/promote.
+    ownership = {}
 
     for source in sources:
         src_path = source.get("path", "")
@@ -228,6 +245,7 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                     os.symlink(actual_src, dest_file)
                     systems_with_files.add(system)
                     total_files += 1
+                    ownership[f"{system}/{dest_name}"] = actual_src
                 except OSError as exc:
                     logger.warning(
                         "Source '%s': could not create symlink %s -> %s: %s",
@@ -237,7 +255,33 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                         exc,
                     )
 
+    if config_dir is not None:
+        _write_ownership(config_dir, ownership, local_source_path)
+
     return {
         "systems": sorted(systems_with_files),
         "total_files": total_files,
     }
+
+
+def _write_ownership(config_dir, ownership, local_source_path):
+    """Persist the canonical-path → source-file-path mapping to ownership.json.
+
+    Consumed by server.py's /api/promote endpoint, which needs to know which
+    source file backs a given merged entry so it can copy that file into
+    /sources/local/ on demand.
+    """
+    path = os.path.join(config_dir, "ownership.json")
+    tmp = path + ".tmp"
+    payload = {
+        "local_source_path": local_source_path,
+        "entries": ownership,
+    }
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.rename(tmp, path)
+    except OSError as exc:
+        logger.warning("Could not write %s: %s", path, exc)
