@@ -27,6 +27,10 @@ _REGION_CODES = {"USA", "Japan", "Europe", "World", "France", "Germany", "Spain"
 # roms SMB share as fake games.
 _SAVE_EXTENSIONS = (".srm", ".sav", ".state")
 
+# System folders that should not be merged — they contain non-ROM data
+# (native executables, assets, scripts) that would pollute the game library.
+_SKIP_SYSTEMS = {"ports", "tools", "bios", "imgs", "themes", "music", "videos"}
+
 
 def _is_save_file(filename):
     """True if filename is a save file (.srm / .sav / .state / .stateN / .state.auto)."""
@@ -265,6 +269,8 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
         for system in sorted(entries):
             if system.startswith("."):
                 continue  # skip hidden
+            if system.lower() in _SKIP_SYSTEMS:
+                continue
 
             system_path = os.path.join(rom_root_path, system)
             if not os.path.isdir(system_path):
