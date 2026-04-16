@@ -42,6 +42,15 @@ _HEADER_SKIP = {
     ".a78": 128,  # Atari 7800 header
 }
 
+# ROM extensions worth hashing for OpenVGDB / ScreenScraper identification.
+# Files with other extensions (e.g. .p8.png, .lua) are skipped entirely.
+_ROM_EXTENSIONS = {
+    ".nes", ".fds", ".sfc", ".smc", ".gba", ".gbc", ".gb", ".n64", ".z64",
+    ".v64", ".nds", ".gen", ".md", ".sms", ".gg", ".pce", ".ngp", ".ngc",
+    ".ws", ".wsc", ".a26", ".a78", ".lnx", ".bin", ".cue", ".iso", ".cso",
+    ".pbp", ".zip", ".7z",
+}
+
 _SCREENSCRAPER_BASE_URL = "https://api.screenscraper.fr/api2/jeuRecherche.php"
 
 _SCREENSCRAPER_SYSTEM_MAP = {
@@ -548,6 +557,10 @@ def identify_rom(db_path, filepath, system_name=None, debug=False, conn=None):
         If debug=True, returns a (result, debug_info) tuple.
     """
     debug_info = {} if debug else None
+
+    _, ext = os.path.splitext(filepath)
+    if ext.lower() not in _ROM_EXTENSIONS:
+        return (None, debug_info) if debug else None
 
     try:
         hashes = hash_rom(filepath)
