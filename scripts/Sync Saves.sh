@@ -153,16 +153,19 @@ promote_did_copy() {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Upload save atomically: put <local> to <name>.tmp, then rename.
+# 6. Upload save: put <local> to <name>.tmp, delete old <name>, rename tmp.
 #    upload_save <system> <local-file> <remote-name>
+#
+# smbclient's `rename` does not overwrite an existing destination, so a
+# naive put+rename silently fails when a save already exists on the server.
+# We work around it by `rm`-ing the target just before the rename. The
+# window of non-atomicity is small, and the .tmp staging still protects
+# against a half-written file if the network drops during `put`.
 #
 # smbclient is noisy: it prints "Unable to initialize messaging context" in
 # container environments (harmless) and returns rc=1 if any command in a -c
-# script fails, including a no-op mkdir. We therefore:
-#   1. Run mkdir separately and discard its result.
-#   2. Run put + rename in a second call with semicolon-separated commands.
-#   3. Verify success by listing the final file — if it's there, we're done,
-#      regardless of what smbclient's exit code said.
+# script fails. We verify success by listing the final file and comparing
+# its size to the local file — authoritative regardless of exit code.
 # ---------------------------------------------------------------------------
 upload_save() {
     local system="$1"
@@ -171,26 +174,36 @@ upload_save() {
     local share="//$SERVER_IP/$SAVES_SHARE"
     local tmp_name="${remote_name}.tmp"
 
+    local local_size
+    local_size=$(stat -c %s "$local_file" 2>/dev/null)
+
     # 1. Ensure the system subdirectory exists. Failure means it already
     #    exists — harmless — or a real problem that will surface in step 2.
     smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
         -c "mkdir \"$system\"" >/dev/null 2>&1
 
-    # 2. Put to a temp name then rename atomically. Semicolon-separated.
+    # 2. Clear any stale .tmp from a previous failed run.
+    smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
+        -c "cd \"$system\"; rm \"$tmp_name\"" >/dev/null 2>&1
+
+    # 3. Put to .tmp, remove old final (if any), then rename .tmp into place.
     local out
     out=$(smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
-        -c "cd \"$system\"; put \"$local_file\" \"$tmp_name\"; rename \"$tmp_name\" \"$remote_name\"" 2>&1)
+        -c "cd \"$system\"; put \"$local_file\" \"$tmp_name\"; rm \"$remote_name\"; rename \"$tmp_name\" \"$remote_name\"" 2>&1)
 
-    # 3. Verify by listing the final file on the server. Authoritative check.
+    # 4. Verify: remote file must exist AND match local size.
     local ls_out
     ls_out=$(smbclient "$share" $SMB_PORT_FLAG $SMB_AUTH \
         -c "ls \"$system/$remote_name\"" 2>&1)
-    if echo "$ls_out" | grep -qF "$remote_name"; then
+    local remote_size
+    remote_size=$(echo "$ls_out" | awk -v n="$remote_name" '
+        $1 == n { for (i=2; i<=NF; i++) if ($i ~ /^[0-9]+$/) { print $i; exit } }
+    ')
+    if [ -n "$remote_size" ] && [ "$remote_size" = "$local_size" ]; then
         return 0
     fi
 
-    # Upload failed. Surface whichever output is more informative.
-    echo "    [ERROR] upload failed"
+    echo "    [ERROR] upload failed (local=${local_size:-?} remote=${remote_size:-missing})"
     echo "$out" | grep -viE "^$|Unable to initialize messaging context" | sed 's/^/      /'
     return 1
 }
