@@ -522,6 +522,12 @@ def scrape_all(merged_dir, cache_file, cache_dir, on_progress=None):
             skipped += 1
             continue
 
+        # Skip systems with no Libretro mapping (e.g. pico-8, ports).
+        if SYSTEM_MAP.get(system_folder.lower()) is None:
+            cache[cache_key] = {"title": game_name, "thumbnail": None}
+            skipped += 1
+            continue
+
         # Rate-limit: 1 second between download attempts.
         if not first_download:
             time.sleep(1)
