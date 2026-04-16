@@ -231,7 +231,8 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
             if not os.path.isdir(system_path):
                 continue  # only process directories as system folders
 
-            # List files inside the system folder (flat, no recursion)
+            # List files inside the system folder, recursing into
+            # subdirectories (e.g. pico-8/carts/).
             try:
                 file_entries = os.listdir(system_path)
             except PermissionError as exc:
@@ -240,61 +241,68 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                 )
                 continue
 
-            for filename in file_entries:
-                if filename.startswith("."):
-                    continue  # skip hidden files
-                if _is_save_file(filename):
-                    continue  # save data lives next to the ROM but is not a ROM
+            scan_queue = [(system_path, file_entries)]
+            while scan_queue:
+                current_dir, entries = scan_queue.pop()
+                for filename in entries:
+                    if filename.startswith("."):
+                        continue
+                    full_path = os.path.join(current_dir, filename)
+                    if os.path.isdir(full_path) and not os.path.islink(full_path):
+                        try:
+                            sub_entries = os.listdir(full_path)
+                        except PermissionError:
+                            continue
+                        scan_queue.append((full_path, sub_entries))
+                        continue
+                    if _is_save_file(filename):
+                        continue
 
-                src_file = os.path.join(system_path, filename)
+                    src_file = full_path
 
-                # Skip subdirectories within system folders (flat listing only)
-                if os.path.isdir(src_file) and not os.path.islink(src_file):
-                    continue
+                    # Attempt ROM identification to get a canonical symlink name.
+                    dest_name = filename
+                    if db_path is not None:
+                        canonical = romident.identify_rom(db_path, src_file)
+                        if canonical is not None:
+                            canonical = _clean_name(canonical)
+                            src_base, src_ext = os.path.splitext(filename)
+                            canon_base, canon_ext = os.path.splitext(canonical)
+                            if canon_base != src_base:
+                                dest_name = canon_base + (src_ext if src_ext else canon_ext)
+                            if dest_name != filename:
+                                logger.debug("Identified: %s -> %s", filename, dest_name)
 
-                # Attempt ROM identification to get a canonical symlink name.
-                dest_name = filename
-                if db_path is not None:
-                    canonical = romident.identify_rom(db_path, src_file)
-                    if canonical is not None:
-                        canonical = _clean_name(canonical)
-                        src_base, src_ext = os.path.splitext(filename)
-                        canon_base, canon_ext = os.path.splitext(canonical)
-                        if canon_base != src_base:
-                            dest_name = canon_base + (src_ext if src_ext else canon_ext)
-                        if dest_name != filename:
-                            logger.debug("Identified: %s -> %s", filename, dest_name)
+                    # Rename the source file on disk if it is in the local source.
+                    actual_src = _maybe_rename_file(src_file, dest_name, local_source_path)
 
-                # Rename the source file on disk if it is in the local source.
-                actual_src = _maybe_rename_file(src_file, dest_name, local_source_path)
+                    dest_system_dir = os.path.join(merged_dir, system)
+                    dest_file = os.path.join(dest_system_dir, dest_name)
 
-                dest_system_dir = os.path.join(merged_dir, system)
-                dest_file = os.path.join(dest_system_dir, dest_name)
+                    # First-source-wins (keyed on destination path, which uses the
+                    # canonical name so deduplication works correctly after renaming)
+                    if dest_file in seen:
+                        continue
 
-                # First-source-wins (keyed on destination path, which uses the
-                # canonical name so deduplication works correctly after renaming)
-                if dest_file in seen:
-                    continue
+                    seen.add(dest_file)
 
-                seen.add(dest_file)
+                    # Create system directory if needed
+                    os.makedirs(dest_system_dir, exist_ok=True)
 
-                # Create system directory if needed
-                os.makedirs(dest_system_dir, exist_ok=True)
-
-                # Create the symlink
-                try:
-                    os.symlink(actual_src, dest_file)
-                    systems_with_files.add(system)
-                    total_files += 1
-                    ownership[f"{system}/{dest_name}"] = actual_src
-                except OSError as exc:
-                    logger.warning(
-                        "Source '%s': could not create symlink %s -> %s: %s",
-                        src_name,
-                        dest_file,
-                        src_file,
-                        exc,
-                    )
+                    # Create the symlink
+                    try:
+                        os.symlink(actual_src, dest_file)
+                        systems_with_files.add(system)
+                        total_files += 1
+                        ownership[f"{system}/{dest_name}"] = actual_src
+                    except OSError as exc:
+                        logger.warning(
+                            "Source '%s': could not create symlink %s -> %s: %s",
+                            src_name,
+                            dest_file,
+                            src_file,
+                            exc,
+                        )
 
     if config_dir is not None:
         _write_ownership(config_dir, ownership, local_source_path)
