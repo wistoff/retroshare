@@ -120,6 +120,37 @@ def _maybe_rename_file(src_file, dest_name, local_source_path):
         return src_file
 
 
+def _load_ident_cache(path):
+    if path is None:
+        return {}
+    try:
+        with open(path, "r") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_ident_cache(path, cache):
+    if path is None:
+        return
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as fh:
+            json.dump(cache, fh)
+        os.rename(tmp, path)
+    except OSError as exc:
+        logger.warning("Could not write ident cache: %s", exc)
+
+
+def _cache_key(filepath):
+    """Build a cache key from filepath + mtime + size."""
+    try:
+        st = os.stat(filepath)
+        return f"{filepath}\t{int(st.st_mtime)}\t{st.st_size}"
+    except OSError:
+        return None
+
+
 def _clear_merged(merged_dir):
     """Remove all symlinks and empty directories under merged_dir (bottom-up).
 
@@ -178,10 +209,18 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
 
     # Resolve the ROM identification DB once per rebuild (not per file).
     db_path = None
+    db_conn = None
     if config_dir is not None:
         db_path = romident.ensure_db(config_dir)
         if db_path is None:
             logger.warning("OpenVGDB unavailable — ROM identification disabled for this rebuild")
+        else:
+            db_conn = romident.open_db(db_path)
+
+    # Load the ident cache: maps (filepath, mtime, size) → canonical name.
+    ident_cache_path = os.path.join(config_dir, "identcache.json") if config_dir else None
+    ident_cache = _load_ident_cache(ident_cache_path)
+    ident_cache_updated = False
 
     # Local source always wins on collision: move it to the front of the list
     # so first-source-wins naturally picks it. This is the mechanism behind
@@ -263,7 +302,15 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                     # Attempt ROM identification to get a canonical symlink name.
                     dest_name = filename
                     if db_path is not None:
-                        canonical = romident.identify_rom(db_path, src_file)
+                        ck = _cache_key(src_file)
+                        cached = ident_cache.get(ck) if ck else None
+                        if cached is not None:
+                            canonical = cached
+                        else:
+                            canonical = romident.identify_rom(db_path, src_file, conn=db_conn)
+                            if ck:
+                                ident_cache[ck] = canonical
+                                ident_cache_updated = True
                         if canonical is not None:
                             canonical = _clean_name(canonical)
                             src_base, src_ext = os.path.splitext(filename)
@@ -303,6 +350,12 @@ def rebuild(sources, merged_dir, config_dir=None, local_source_path=None):
                             src_file,
                             exc,
                         )
+
+    if db_conn is not None:
+        db_conn.close()
+
+    if ident_cache_updated:
+        _save_ident_cache(ident_cache_path, ident_cache)
 
     if config_dir is not None:
         _write_ownership(config_dir, ownership, local_source_path)

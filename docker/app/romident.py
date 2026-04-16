@@ -399,13 +399,14 @@ _HASH_COLUMN_MAP = {
 }
 
 
-def lookup_rom(db_path, hash_type, hash_hex):
+def lookup_rom(db_path, hash_type, hash_hex, conn=None):
     """Look up a ROM hash in the OpenVGDB SQLite database.
 
     Args:
         db_path:    Path to openvgdb.sqlite.
         hash_type:  One of "crc32", "md5", or "sha1".
         hash_hex:   Uppercase hex hash string.
+        conn:       Optional existing SQLite connection to reuse.
 
     Returns:
         Canonical No-Intro filename string (e.g.
@@ -415,13 +416,19 @@ def lookup_rom(db_path, hash_type, hash_hex):
     if column is None:
         return None
 
-    uri = "file:{}?mode=ro".format(urllib.request.pathname2url(os.path.abspath(db_path)))
-    with sqlite3.connect(uri, uri=True) as conn:
+    own_conn = conn is None
+    if own_conn:
+        uri = "file:{}?mode=ro".format(urllib.request.pathname2url(os.path.abspath(db_path)))
+        conn = sqlite3.connect(uri, uri=True)
+    try:
         cur = conn.execute(
             f"SELECT romFileName FROM ROMs WHERE {column} = ? LIMIT 1",
             (hash_hex.upper(),),
         )
         row = cur.fetchone()
+    finally:
+        if own_conn:
+            conn.close()
 
     return row[0] if row is not None else None
 
@@ -512,7 +519,17 @@ def screenScraper_lookup(hashes, system_name, debug_info=None):
 # ---------------------------------------------------------------------------
 
 
-def identify_rom(db_path, filepath, system_name=None, debug=False):
+def open_db(db_path):
+    """Open a read-only SQLite connection to the OpenVGDB database.
+
+    Caller is responsible for closing it. Intended for batch operations
+    where many lookups share one connection.
+    """
+    uri = "file:{}?mode=ro".format(urllib.request.pathname2url(os.path.abspath(db_path)))
+    return sqlite3.connect(uri, uri=True)
+
+
+def identify_rom(db_path, filepath, system_name=None, debug=False, conn=None):
     """Hash a ROM file and look it up in OpenVGDB, then ScreenScraper.
 
     Tries CRC32 first, then MD5, then SHA1 via OpenVGDB.  If all fail and
@@ -524,6 +541,7 @@ def identify_rom(db_path, filepath, system_name=None, debug=False):
         system_name: Optional system folder name (e.g. "gba") for ScreenScraper
                      fallback and for filename-based lookup.
         debug:       If True, returns a debug dict as second return value.
+        conn:        Optional existing SQLite connection to reuse.
 
     Returns:
         Canonical No-Intro filename string, or None if not found or on error.
@@ -544,7 +562,7 @@ def identify_rom(db_path, filepath, system_name=None, debug=False):
         debug_info["hashes"] = hashes
 
     for hash_type in ("crc32", "md5", "sha1"):
-        result = lookup_rom(db_path, hash_type, hashes[hash_type])
+        result = lookup_rom(db_path, hash_type, hashes[hash_type], conn=conn)
         if result is not None:
             logger.debug("Identified %s via OpenVGDB/%s: %s", filepath, hash_type, result)
             if debug_info is not None:
